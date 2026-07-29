@@ -1,35 +1,28 @@
+// IoT PLC Studio - Éditeur Ladder complet sur une seule feuille
+// Copiez ce code dans un fichier App.jsx et exécutez avec React + Recharts
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import {
-  Play, Square, Plus, Minus, Trash2, Download, Upload, Cpu, Activity,
-  LayoutGrid, Gauge as GaugeIcon, ToggleLeft, FolderOpen, Code2,
-  MonitorSmartphone, X, Zap, RotateCcw, Eraser, Save, ChevronDown,
-  Lightbulb, LineChart as LineChartIcon, SlidersHorizontal, Info,
-} from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from "recharts";
 
 /* ============================================================
-   IoT PLC Studio
-   Prototype logiciel : editeur Ladder (IEC 61131-3 simplifie),
-   simulation temps reel cote navigateur, generation de code
-   Arduino, mini HMI/SCADA et bibliotheque d'exemples.
-   Aucune connexion materielle reelle, aucun backend : tout
-   s'execute en memoire dans cette session.
+   IoT PLC Studio - Prototype logiciel : éditeur Ladder
+   (IEC 61131-3 simplifié), simulation temps réel navigateur,
+   génération code Arduino, HMI/SCADA, bibliothèque d'exemples.
+   Tout s'exécute en mémoire, aucune connexion matérielle réelle.
    ============================================================ */
 
-/* ---------- Utils ---------- */
+/* ---------- Utilitaires ---------- */
 let __uid = 1;
 const uid = () => `id${(__uid++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-/* ---------- Data model helpers ---------- */
+/* ---------- Modèle de données Ladder ---------- */
 const makeCell = (kind = "EMPTY", address = "") => ({
   id: uid(), kind, address, address2: "", op: ">", value: "0", branches: null,
 });
-// Une cellule "GROUP" represente un bloc parallele imbriquable dans une serie :
-// plusieurs branches (listes de cellules simples) en OU, le tout en serie avec le reste de la ligne.
 const makeGroupCell = () => ({
   id: uid(), kind: "GROUP", address: "", address2: "", op: ">", value: "0",
   branches: [[makeCell()], [makeCell()]],
@@ -54,9 +47,8 @@ const DEFAULT_IO_MAP = [
 ];
 function createBlankProject() {
   return {
-    name: "Nouveau projet",
-    board: "uno",
-    networks: [makeNetwork(3, 1, "Reseau 1")],
+    name: "Nouveau projet", board: "uno",
+    networks: [makeNetwork(3, 1, "Réseau 1")],
     ioMap: clone(DEFAULT_IO_MAP),
     hmi: { widgets: [] },
   };
@@ -72,7 +64,7 @@ const BOARDS = [
   { id: "rpi", label: "Raspberry Pi" },
 ];
 
-/* ---------- Addressing / evaluation engine ---------- */
+/* ---------- Moteur d'évaluation ---------- */
 function parseAddress(addr) {
   if (addr == null || addr === "") return { group: "LIT", value: 0 };
   if (/^-?\d+(\.\d+)?$/.test(addr)) return { group: "LIT", value: parseFloat(addr) };
@@ -102,9 +94,7 @@ function getNum(values, addr) {
 }
 function setBoolAddr(values, addr, val) {
   const p = parseAddress(addr);
-  if (p.group === "I" || p.group === "Q" || p.group === "M") {
-    values[p.group][p.key] = !!val;
-  }
+  if (p.group === "I" || p.group === "Q" || p.group === "M") values[p.group][p.key] = !!val;
 }
 function setNumAddr(values, addr, val) {
   const p = parseAddress(addr);
@@ -125,17 +115,14 @@ function evaluateCell(cell, values, prevValues) {
       const a = getNum(values, cell.address);
       const b = parseFloat(cell.value || "0");
       switch (cell.op) {
-        case ">": return a > b;
-        case "<": return a < b;
-        case ">=": return a >= b;
-        case "<=": return a <= b;
-        case "==": return a === b;
-        case "!=": return a !== b;
+        case ">": return a > b; case "<": return a < b;
+        case ">=": return a >= b; case "<=": return a <= b;
+        case "==": return a === b; case "!=": return a !== b;
         default: return false;
       }
     }
     case "XOR": return getBool(values, cell.address) !== getBool(values, cell.address2);
-    default: return true; // EMPTY = wire pass-through
+    default: return true;
   }
 }
 function initValues() {
@@ -152,12 +139,8 @@ function scanOnce(project, values, prevValues, prevNetPower, dt) {
   const visual = {};
   project.networks.forEach((net) => {
     const rowStagePowers = net.rows.map((row) => {
-      let p = true;
-      const stages = [true];
-      row.cells.forEach((cell) => {
-        p = p && evaluateCell(cell, values, prevValues);
-        stages.push(p);
-      });
+      let p = true; const stages = [true];
+      row.cells.forEach((cell) => { p = p && evaluateCell(cell, values, prevValues); stages.push(p); });
       return stages;
     });
     const merged = rowStagePowers.some((s) => s[s.length - 1]);
@@ -217,7 +200,7 @@ function scanOnce(project, values, prevValues, prevNetPower, dt) {
   return { newValues, visual };
 }
 
-/* ---------- Collecting addresses (for watch panel + codegen) ---------- */
+/* ---------- Collecte des adresses (surveillance + génération de code) ---------- */
 function collectFromCell(c, set) {
   if (c.kind === "GROUP") {
     (c.branches || []).forEach((branch) => branch.forEach((sc) => collectFromCell(sc, set)));
@@ -238,21 +221,16 @@ function collectUsedBoolAddresses(project) {
   return [...set].filter((a) => /^[IQM]/.test(a)).sort();
 }
 function collectTimersCounters(project) {
-  const timers = new Map();
-  const counters = new Map();
+  const timers = new Map(); const counters = new Map();
   project.networks.forEach((net) => {
     const o = net.output;
-    if (["TON", "TOF", "TP"].includes(o.kind) && o.address) {
-      timers.set(o.address, { addr: o.address, kind: o.kind, preset: o.preset });
-    }
-    if (["CTU", "CTD"].includes(o.kind) && o.address) {
-      counters.set(o.address, { addr: o.address, kind: o.kind, preset: o.preset, resetAddress: o.resetAddress });
-    }
+    if (["TON", "TOF", "TP"].includes(o.kind) && o.address) timers.set(o.address, { addr: o.address, kind: o.kind, preset: o.preset });
+    if (["CTU", "CTD"].includes(o.kind) && o.address) counters.set(o.address, { addr: o.address, kind: o.kind, preset: o.preset, resetAddress: o.resetAddress });
   });
   return { timers: [...timers.values()].sort((a, b) => a.addr.localeCompare(b.addr)), counters: [...counters.values()].sort((a, b) => a.addr.localeCompare(b.addr)) };
 }
 
-/* ---------- Arduino code generator ---------- */
+/* ---------- Génération de code Arduino ---------- */
 function cIdentBool(addr) {
   const p = parseAddress(addr);
   if (p.group === "T") return `T${p.key}_Q`;
@@ -288,75 +266,53 @@ function generateArduinoCode(project) {
   const { timers, counters } = collectTimersCounters(project);
   const aiEntries = project.ioMap.filter((e) => e.kind === "AI");
   const aqEntries = project.ioMap.filter((e) => e.kind === "AQ");
-
-  L.push(`// ============================================================`);
-  L.push(`// ${project.name} — genere par IoT PLC Studio`);
-  L.push(`// Cible : ${boardLabel}`);
-  L.push(`// Ce code traduit le programme Ladder en C/C++ Arduino.`);
-  L.push(`// A relire/valider avant tout deploiement sur un vrai systeme.`);
-  L.push(`// ============================================================`);
+  L.push(`// ${project.name} — IoT PLC Studio — Cible : ${boardLabel}`);
   L.push("");
-  L.push("// ---------- Broches ----------");
   project.ioMap.forEach((io) => {
     const pinLit = /^A\d+$/.test(io.pin) ? io.pin : io.pin.replace(/^D/, "");
-    L.push(`const int PIN_${io.addr.replace(".", "_")} = ${pinLit}; // ${io.addr} -> ${io.pin}`);
+    L.push(`const int PIN_${io.addr.replace(".", "_")} = ${pinLit};`);
   });
-  L.push("");
-  L.push("// ---------- Variables (I = entrees, Q = sorties, M = memoires) ----------");
-  boolAddrs.forEach((a) => L.push(`bool ${cIdentBool(a)} = false;`));
-  aiEntries.forEach((io) => L.push(`int ${io.addr} = 0; // lecture analogique 0-1023`));
-  aqEntries.forEach((io) => L.push(`int ${io.addr} = 0; // TODO : assigner cette sortie analogique/PWM dans votre logique`));
-  L.push("");
-  L.push("// ---------- Temporisateurs ----------");
-  if (timers.length === 0) L.push("// (aucun temporisateur dans ce programme)");
+  L.push(""); boolAddrs.forEach((a) => L.push(`bool ${cIdentBool(a)} = false;`));
+  aiEntries.forEach((io) => L.push(`int ${io.addr} = 0;`));
+  aqEntries.forEach((io) => L.push(`int ${io.addr} = 0;`));
+  L.push(""); if (timers.length === 0) L.push("// aucun temporisateur");
   timers.forEach((t) => {
-    L.push(`unsigned long ${t.addr}_ET = 0;   // temps ecoule (ms)`);
-    L.push(`bool ${t.addr}_Q = false;         // sortie ${t.kind}, consigne = ${t.preset} ms`);
-    if (t.kind === "TP") L.push(`bool ${t.addr}_pulsing = false;`);
+    L.push(`unsigned long ${t.addr}_ET = 0;`);
+    L.push(`bool ${t.addr}_Q = false; ${t.kind === "TP" ? `bool ${t.addr}_pulsing = false;` : ""}`);
   });
-  L.push("");
-  L.push("// ---------- Compteurs ----------");
-  if (counters.length === 0) L.push("// (aucun compteur dans ce programme)");
+  L.push(""); if (counters.length === 0) L.push("// aucun compteur");
   counters.forEach((c) => {
-    L.push(`int ${c.addr}_CV = ${c.kind === "CTD" ? c.preset : 0};  // valeur courante, consigne = ${c.preset} (${c.kind})`);
+    L.push(`int ${c.addr}_CV = ${c.kind === "CTD" ? c.preset : 0};`);
     L.push(`bool ${c.addr}_Q = false;`);
   });
   L.push("");
-  L.push("// ---------- Etats reseau precedents (fronts montants) ----------");
   project.networks.forEach((net, idx) => {
     if (["TP", "CTU", "CTD"].includes(net.output.kind)) L.push(`bool prevNet${idx + 1} = false;`);
   });
-  L.push("");
   L.push("unsigned long lastScan = 0;");
   L.push("");
   L.push("void setup() {");
   L.push("  Serial.begin(115200);");
   project.ioMap.forEach((io) => {
     if (io.kind === "DI") L.push(`  pinMode(PIN_${io.addr.replace(".", "_")}, INPUT);`);
-    if (io.kind === "DO") L.push(`  pinMode(PIN_${io.addr.replace(".", "_")}, OUTPUT);`);
-    if (io.kind === "AQ") L.push(`  pinMode(PIN_${io.addr.replace(".", "_")}, OUTPUT);`);
+    if (io.kind === "DO" || io.kind === "AQ") L.push(`  pinMode(PIN_${io.addr.replace(".", "_")}, OUTPUT);`);
   });
   L.push("}");
   L.push("");
   L.push("void loop() {");
-  L.push("  unsigned long now = millis();");
-  L.push("  unsigned long dt = now - lastScan;");
-  L.push("  lastScan = now;");
+  L.push("  unsigned long now = millis(); unsigned long dt = now - lastScan; lastScan = now;");
   L.push("");
-  L.push("  // -- memorisation de l'etat precedent (fronts P/N) --");
   boolAddrs.forEach((a) => L.push(`  bool prev_${cIdentBool(a)} = ${cIdentBool(a)};`));
   L.push("");
-  L.push("  // -- lecture des entrees --");
   project.ioMap.forEach((io) => {
     if (io.kind === "DI") L.push(`  ${io.addr.replace(".", "_")} = digitalRead(PIN_${io.addr.replace(".", "_")});`);
     if (io.kind === "AI") L.push(`  ${io.addr} = analogRead(PIN_${io.addr.replace(".", "_")});`);
   });
   L.push("");
-  L.push("  // -- logique Ladder (un bloc par reseau, dans l'ordre du programme) --");
+  L.push("  // — Logique Ladder —");
   project.networks.forEach((net, idx) => {
     const n = idx + 1;
     const rowExprs = net.rows.map((row) => `(${row.cells.map(cCond).join(" && ")})`);
-    L.push(`  // Reseau ${n}${net.comment ? " - " + net.comment : ""}`);
     L.push(`  bool net${n} = ${rowExprs.join(" || ")};`);
     const o = net.output;
     if (o.address) {
@@ -366,12 +322,10 @@ function generateArduinoCode(project) {
         case "SET": L.push(`  if (net${n}) ${cIdentBool(o.address)} = true;`); break;
         case "RESET": L.push(`  if (net${n}) ${cIdentBool(o.address)} = false;`); break;
         case "TON":
-          L.push(`  if (net${n}) { ${o.address}_ET = min(${o.address}_ET + dt, (unsigned long)${o.preset}); ${o.address}_Q = ${o.address}_ET >= ${o.preset}; }`);
-          L.push(`  else { ${o.address}_ET = 0; ${o.address}_Q = false; }`);
+          L.push(`  if (net${n}) { ${o.address}_ET = min(${o.address}_ET + dt, (unsigned long)${o.preset}); ${o.address}_Q = ${o.address}_ET >= ${o.preset}; } else { ${o.address}_ET = 0; ${o.address}_Q = false; }`);
           break;
         case "TOF":
-          L.push(`  if (net${n}) { ${o.address}_Q = true; ${o.address}_ET = 0; }`);
-          L.push(`  else { ${o.address}_ET = min(${o.address}_ET + dt, (unsigned long)${o.preset}); ${o.address}_Q = ${o.address}_ET < ${o.preset}; }`);
+          L.push(`  if (net${n}) { ${o.address}_Q = true; ${o.address}_ET = 0; } else { ${o.address}_ET = min(${o.address}_ET + dt, (unsigned long)${o.preset}); ${o.address}_Q = ${o.address}_ET < ${o.preset}; }`);
           break;
         case "TP":
           L.push(`  if (net${n} && !prevNet${n}) { ${o.address}_pulsing = true; ${o.address}_ET = 0; }`);
@@ -391,9 +345,9 @@ function generateArduinoCode(project) {
       }
       if (["TP", "CTU", "CTD"].includes(o.kind)) L.push(`  prevNet${n} = net${n};`);
     }
-    L.push("");
   });
-  L.push("  // -- ecriture des sorties --");
+  L.push("");
+  L.push("  // — Écriture des sorties —");
   project.ioMap.forEach((io) => {
     if (io.kind === "DO") L.push(`  digitalWrite(PIN_${io.addr.replace(".", "_")}, ${io.addr.replace(".", "_")});`);
     if (io.kind === "AQ") L.push(`  analogWrite(PIN_${io.addr.replace(".", "_")}, constrain(${io.addr}, 0, 255));`);
@@ -402,7 +356,7 @@ function generateArduinoCode(project) {
   return L.join("\n");
 }
 
-/* ---------- Bibliotheque de projets d'exemple ---------- */
+/* ---------- Bibliothèque d'exemples ---------- */
 function net(cols, rowsCells, output, comment) {
   return {
     id: uid(), cols, comment,
@@ -415,182 +369,60 @@ function net(cols, rowsCells, output, comment) {
 }
 const EXAMPLES = [
   {
-    id: "motor", title: "Marche / Arret moteur", desc: "Circuit d'auto-maintien classique : appui Marche, arret par bouton NF.",
-    ioMap: [
-      { addr: "I0.0", pin: "D2", kind: "DI" }, { addr: "I0.1", pin: "D3", kind: "DI" },
-      { addr: "Q0.0", pin: "D8", kind: "DO" },
-    ],
+    id: "motor", title: "Marche/Arrêt moteur", desc: "Auto-maintien classique.",
+    ioMap: [{ addr: "I0.0", pin: "D2", kind: "DI" }, { addr: "I0.1", pin: "D3", kind: "DI" }, { addr: "Q0.0", pin: "D8", kind: "DO" }],
     networks: [
-      net(2, [
-        [{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }],
-        [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }],
-      ], { kind: "COIL", address: "M0" }, "Marche (I0.0) / Arret (I0.1) avec auto-maintien M0"),
-      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "Commande du contacteur moteur"),
+      net(2, [[{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }], [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }]], { kind: "COIL", address: "M0" }, "Auto-maintien"),
+      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "Commande moteur"),
     ],
   },
   {
-    id: "star-delta", title: "Demarrage etoile-triangle", desc: "Sequence KM ligne / etoile / triangle temporisee par TON.",
-    ioMap: [
-      { addr: "I0.0", pin: "D2", kind: "DI" }, { addr: "I0.1", pin: "D3", kind: "DI" },
-      { addr: "Q0.0", pin: "D8", kind: "DO" }, { addr: "Q0.1", pin: "D9", kind: "DO" }, { addr: "Q0.2", pin: "D10", kind: "DO" },
-    ],
+    id: "star-delta", title: "Démarrage étoile-triangle", desc: "Séquence temporisée.",
+    ioMap: [{ addr: "I0.0", pin: "D2", kind: "DI" }, { addr: "I0.1", pin: "D3", kind: "DI" }, { addr: "Q0.0", pin: "D8", kind: "DO" }, { addr: "Q0.1", pin: "D9", kind: "DO" }, { addr: "Q0.2", pin: "D10", kind: "DO" }],
     networks: [
-      net(2, [
-        [{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }],
-        [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }],
-      ], { kind: "COIL", address: "M0" }, "Marche (I0.0) / Arret (I0.1)"),
-      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "TON", address: "T0", preset: 3000 }, "Temporisation etoile (3 s)"),
-      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "KM ligne"),
-      net(2, [[{ kind: "NO", address: "M0" }, { kind: "NC", address: "T0" }]], { kind: "COIL", address: "Q0.1" }, "KM etoile (actif avant fin de T0)"),
-      net(2, [[{ kind: "NO", address: "M0" }, { kind: "NO", address: "T0" }]], { kind: "COIL", address: "Q0.2" }, "KM triangle (actif apres T0)"),
+      net(2, [[{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }], [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }]], { kind: "COIL", address: "M0" }, "Marche"),
+      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "TON", address: "T0", preset: 3000 }, "Tempo 3s"),
+      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "Ligne"),
+      net(2, [[{ kind: "NO", address: "M0" }, { kind: "NC", address: "T0" }]], { kind: "COIL", address: "Q0.1" }, "Étoile"),
+      net(2, [[{ kind: "NO", address: "M0" }, { kind: "NO", address: "T0" }]], { kind: "COIL", address: "Q0.2" }, "Triangle"),
     ],
   },
   {
-    id: "traffic", title: "Feux tricolores", desc: "Sequence rouge -> jaune -> vert par temporisateurs TON chaines. Appui Start pour relancer.",
-    ioMap: [
-      { addr: "I0.0", pin: "D2", kind: "DI" },
-      { addr: "Q0.0", pin: "D8", kind: "DO" }, { addr: "Q0.1", pin: "D9", kind: "DO" }, { addr: "Q0.2", pin: "D10", kind: "DO" },
-    ],
+    id: "traffic", title: "Feux tricolores", desc: "Séquence rouge/jaune/vert.",
+    ioMap: [{ addr: "I0.0", pin: "D2", kind: "DI" }, { addr: "Q0.0", pin: "D8", kind: "DO" }, { addr: "Q0.1", pin: "D9", kind: "DO" }, { addr: "Q0.2", pin: "D10", kind: "DO" }],
     networks: [
-      net(1, [[{ kind: "NO", address: "I0.0" }]], { kind: "SET", address: "M0" }, "Depart de cycle"),
-      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "TON", address: "T0", preset: 4000 }, "Duree rouge"),
+      net(1, [[{ kind: "NO", address: "I0.0" }]], { kind: "SET", address: "M0" }, "Départ"),
+      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "TON", address: "T0", preset: 4000 }, "Rouge 4s"),
       net(2, [[{ kind: "NO", address: "M0" }, { kind: "NC", address: "T0" }]], { kind: "COIL", address: "Q0.0" }, "Rouge"),
-      net(1, [[{ kind: "NO", address: "T0" }]], { kind: "TON", address: "T1", preset: 1500 }, "Duree jaune"),
+      net(1, [[{ kind: "NO", address: "T0" }]], { kind: "TON", address: "T1", preset: 1500 }, "Jaune 1.5s"),
       net(2, [[{ kind: "NO", address: "T0" }, { kind: "NC", address: "T1" }]], { kind: "COIL", address: "Q0.1" }, "Jaune"),
-      net(1, [[{ kind: "NO", address: "T1" }]], { kind: "TON", address: "T2", preset: 4000 }, "Duree vert"),
+      net(1, [[{ kind: "NO", address: "T1" }]], { kind: "TON", address: "T2", preset: 4000 }, "Vert 4s"),
       net(2, [[{ kind: "NO", address: "T1" }, { kind: "NC", address: "T2" }]], { kind: "COIL", address: "Q0.2" }, "Vert"),
-      net(1, [[{ kind: "NO", address: "T2" }]], { kind: "RESET", address: "M0" }, "Fin de cycle"),
+      net(1, [[{ kind: "NO", address: "T2" }]], { kind: "RESET", address: "M0" }, "Fin cycle"),
     ],
   },
   {
-    id: "conveyor", title: "Convoyeur", desc: "Marche/arret avec arret d'urgence et pause automatique sur detection produit.",
-    ioMap: [
-      { addr: "I0.0", pin: "D2", kind: "DI" }, { addr: "I0.1", pin: "D3", kind: "DI" },
-      { addr: "I0.2", pin: "D4", kind: "DI" }, { addr: "I0.3", pin: "D5", kind: "DI" },
-      { addr: "Q0.0", pin: "D8", kind: "DO" },
-    ],
+    id: "pump", title: "Pompe avec flotteurs", desc: "Remplissage automatique.",
+    ioMap: [{ addr: "I0.0", pin: "D2", kind: "DI" }, { addr: "I0.1", pin: "D3", kind: "DI" }, { addr: "Q0.0", pin: "D8", kind: "DO" }],
     networks: [
-      net(3, [
-        [{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }, { kind: "NC", address: "I0.2" }],
-        [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }, { kind: "NC", address: "I0.2" }],
-      ], { kind: "COIL", address: "M0" }, "Marche (I0.0) / Arret (I0.1) / Arret urgence (I0.2)"),
-      net(2, [[{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.3" }]], { kind: "COIL", address: "Q0.0" }, "Moteur convoyeur, pause si capteur produit I0.3 actif"),
-    ],
-  },
-  {
-    id: "pump", title: "Pompe avec flotteur", desc: "Remplissage automatique entre un flotteur bas et un flotteur haut.",
-    ioMap: [
-      { addr: "I0.0", pin: "D2", kind: "DI" }, { addr: "I0.1", pin: "D3", kind: "DI" },
-      { addr: "Q0.0", pin: "D8", kind: "DO" },
-    ],
-    networks: [
-      net(2, [
-        [{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }],
-        [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }],
-      ], { kind: "COIL", address: "M0" }, "Flotteur bas I0.0 declenche, flotteur haut I0.1 arrete"),
-      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "Commande pompe"),
+      net(2, [[{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }], [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }]], { kind: "COIL", address: "M0" }, "Flotteurs"),
+      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "Pompe"),
     ],
   },
 ];
 function buildExampleProject(ex) {
   return {
-    name: ex.title,
-    board: "uno",
-    networks: clone(ex.networks),
-    ioMap: clone(ex.ioMap),
-    hmi: { widgets: [
-      { id: uid(), type: "LIGHT", label: "Sortie principale", address: ex.ioMap.find((i) => i.kind === "DO")?.addr || "Q0.0" },
-      { id: uid(), type: "BUTTON", label: "Entree test", address: ex.ioMap.find((i) => i.kind === "DI")?.addr || "I0.0" },
-    ] },
+    name: ex.title, board: "uno",
+    networks: clone(ex.networks), ioMap: clone(ex.ioMap),
+    hmi: { widgets: [] },
   };
 }
 
 /* ============================================================
-   UI — design tokens & small building blocks
+   Composants UI
    ============================================================ */
-const GlobalStyle = () => (
-  <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Oswald:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
-    .plcs-root {
-      --bp-canvas:#181d22; --bp-panel:#2b3138; --bp-panel-raised:#3a4149;
-      --bp-line:#565f68; --bp-line-strong:#7a8590; --bp-rail:#9aa5af;
-      --bp-text:#e7ebee; --bp-text-dim:#9aa4ad; --bp-amber:#ffb020;
-      --bp-energized:#4ee06a; --bp-energized-fill:rgba(78,224,106,0.18);
-      --bp-alarm:#ff4433; --bp-blue:#3fc1ff;
-      --bp-bevel-hi:rgba(255,255,255,0.16); --bp-bevel-lo:rgba(0,0,0,0.55);
-      font-family:'IBM Plex Sans', 'Segoe UI', Tahoma, ui-sans-serif, system-ui, sans-serif;
-      background:
-        repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 3px),
-        var(--bp-canvas);
-      color:var(--bp-text);
-    }
-    .plcs-mono { font-family:'IBM Plex Mono', ui-monospace, monospace; }
-    .plcs-scroll::-webkit-scrollbar{ width:10px; height:10px; }
-    .plcs-scroll::-webkit-scrollbar-thumb{ background:var(--bp-line-strong); border-radius:2px; border:1px solid var(--bp-canvas); }
-    .plcs-scroll::-webkit-scrollbar-track{ background:var(--bp-panel); }
-    .ladder-label{ fill:var(--bp-amber); font-family:'IBM Plex Mono',monospace; font-size:11px; }
-    .ladder-label-dim{ fill:var(--bp-text-dim); font-family:'IBM Plex Mono',monospace; font-size:11px; }
-    .ladder-glyph-tag{ fill:var(--bp-text); font-size:12px; font-weight:600; font-family:'IBM Plex Mono',monospace;}
-    .ladder-glyph-tag-sm{ fill:var(--bp-text); font-size:10px; font-weight:600; font-family:'IBM Plex Mono',monospace;}
-    .ladder-glyph-tiny{ fill:var(--bp-blue); font-size:9px; font-family:'IBM Plex Mono',monospace;}
-    .plcs-blueprint-grid{
-      background-image: linear-gradient(var(--bp-line) 1px, transparent 1px), linear-gradient(90deg, var(--bp-line) 1px, transparent 1px);
-      background-size: 26px 26px; background-position: -1px -1px; opacity:.5;
-    }
-    /* --- Boutons style panneau de commande industriel (relief 3D, embouti) --- */
-    .plcs-btn {
-      display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:3px;
-      border-top:1px solid var(--bp-bevel-hi); border-left:1px solid var(--bp-bevel-hi);
-      border-bottom:1px solid var(--bp-bevel-lo); border-right:1px solid var(--bp-bevel-lo);
-      background:linear-gradient(180deg,#454d56,#33383e);
-      color:var(--bp-text); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.03em;
-      cursor:pointer; transition:transform .05s, box-shadow .12s; white-space:nowrap;
-      box-shadow:0 1px 0 rgba(0,0,0,.4);
-    }
-    .plcs-btn:hover { background:linear-gradient(180deg,#4f5761,#3a4149); }
-    .plcs-btn:active { transform:translateY(1px); box-shadow:inset 0 1px 3px rgba(0,0,0,.6); border-top-color:var(--bp-bevel-lo); border-left-color:var(--bp-bevel-lo); }
-    .plcs-btn.active { border-color:var(--bp-amber); background:linear-gradient(180deg,#5a4315,#3a2a10); color:var(--bp-amber); box-shadow:inset 0 1px 4px rgba(0,0,0,.5); }
-    .plcs-btn:disabled { opacity:.4; cursor:not-allowed; }
-    .plcs-btn.primary { background:linear-gradient(180deg,#5df07e,#2fb955); color:#04270f; border-color:#2c9c48; font-weight:700; }
-    .plcs-btn.primary:hover { background:linear-gradient(180deg,#6bf88c,#39c962); }
-    .plcs-btn.danger { border-color:var(--bp-alarm); color:#ffdbd6; background:linear-gradient(180deg,#8a2a22,#5c1712); }
-    .plcs-btn.danger:hover { background:linear-gradient(180deg,#a3352b,#6e1c16); }
-    .plcs-input, .plcs-select {
-      background:var(--bp-canvas); color:var(--bp-text);
-      border-top:1px solid var(--bp-bevel-lo); border-left:1px solid var(--bp-bevel-lo);
-      border-bottom:1px solid var(--bp-bevel-hi); border-right:1px solid var(--bp-bevel-hi);
-      border-radius:2px; padding:5px 7px; font-size:12.5px; font-family:'IBM Plex Mono',monospace;
-      box-shadow:inset 0 1px 3px rgba(0,0,0,.5);
-    }
-    .plcs-input:focus, .plcs-select:focus { outline:none; border-color:var(--bp-amber); box-shadow:inset 0 1px 3px rgba(0,0,0,.5), 0 0 0 1px var(--bp-amber); }
-    /* --- Onglets type selecteur rotatif de pupitre --- */
-    .plcs-tab {
-      padding:9px 16px; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
-      color:var(--bp-text-dim); cursor:pointer; display:flex; align-items:center; gap:6px;
-      border:1px solid var(--bp-line); border-bottom:none; border-radius:3px 3px 0 0;
-      background:var(--bp-panel); margin-right:2px; transition:background .12s,color .12s;
-    }
-    .plcs-tab.active { color:#181d22; background:var(--bp-amber); border-color:var(--bp-amber); }
-    .plcs-tab:hover:not(.active) { color:var(--bp-text); background:var(--bp-panel-raised); }
-    .plcs-panel-title { font-size:11px; text-transform:uppercase; letter-spacing:.09em; color:var(--bp-text-dim); font-weight:700; margin-bottom:8px; font-family:'Oswald',sans-serif; }
-    .plcs-switch { width:40px; height:22px; border-radius:3px; background:var(--bp-canvas); position:relative; cursor:pointer; transition:background .15s; flex-shrink:0; box-shadow:inset 0 1px 4px rgba(0,0,0,.6); border:1px solid var(--bp-line); }
-    .plcs-switch.on { background:#1b3a22; }
-    .plcs-switch::after { content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:2px; background:linear-gradient(180deg,#7a838c,#454d56); transition:left .15s; box-shadow:0 1px 2px rgba(0,0,0,.5); }
-    .plcs-switch.on::after { left:22px; background:linear-gradient(180deg,#6bf88c,#2fb955); }
-    @keyframes plcs-blink { 0%,100%{opacity:1} 50%{opacity:.35} }
-    .plcs-resize-handle { width:9px; flex-shrink:0; cursor:col-resize; background:var(--bp-panel); display:flex; align-items:center; justify-content:center; position:relative; }
-    .plcs-resize-handle::before { content:''; position:absolute; top:0; bottom:0; left:4px; width:1px; background:var(--bp-line); }
-    .plcs-resize-grip { width:3px; height:34px; border-radius:2px; background:var(--bp-line-strong); transition:background .12s; }
-    .plcs-resize-handle:hover .plcs-resize-grip { background:var(--bp-amber); }
-    .plcs-resize-handle:hover::before { background:var(--bp-amber); }
-    .plcs-vresize-handle { height:9px; flex-shrink:0; cursor:row-resize; background:var(--bp-panel); display:flex; align-items:center; justify-content:center; border-top:1px solid var(--bp-line); }
-    .plcs-vresize-grip { width:34px; height:3px; border-radius:2px; background:var(--bp-line-strong); transition:background .12s; }
-    .plcs-vresize-handle:hover .plcs-vresize-grip { background:var(--bp-amber); }
-    /* --- Rivets/vis d'angle façon armoire electrique, pour les panneaux marquants --- */
-    .plcs-rivet { position:absolute; width:6px; height:6px; border-radius:50%; background:radial-gradient(circle at 35% 35%, #9aa5af, #23282d); box-shadow:0 1px 1px rgba(0,0,0,.6); }
-  `}</style>
-);
 
+// --- Bouton style panneau de commande industriel ---
 function Btn({ children, onClick, active, disabled, title, variant, className = "" }) {
   return (
     <button
@@ -602,8 +434,7 @@ function Btn({ children, onClick, active, disabled, title, variant, className = 
 function Field({ label, children }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5, color: "var(--bp-text-dim)" }}>
-      {label}
-      {children}
+      {label}{children}
     </label>
   );
 }
@@ -611,20 +442,11 @@ function Switch({ on, onClick }) {
   return <div className={`plcs-switch ${on ? "on" : ""}`} onClick={onClick} role="switch" aria-checked={on} />;
 }
 
-/* ---------- Contact / Output glyphs ---------- */
-const SUBCELL_W = 64; // largeur d'un contact simple a l'interieur d'un groupe parallele
-const GROUP_MARGIN = 22;
-function maxBranchLen(cell) {
-  return Math.max(1, ...(cell.branches || [[]]).map((b) => b.length));
-}
-function groupWidth(cell) {
-  return maxBranchLen(cell) * SUBCELL_W + GROUP_MARGIN * 2;
-}
-// Largeur requise par une cellule dans la grille (les groupes sont plus larges que CELL_W)
-function cellWidth(cell) {
-  if (cell && cell.kind === "GROUP") return Math.max(150, groupWidth(cell));
-  return CELL_W;
-}
+// --- Glyphes SVG Ladder ---
+const SUBCELL_W = 64, GROUP_MARGIN = 22, CELL_W = 92, CELL_H = 64, RAIL_PAD = 26, OUT_W = 100, PAD_V = 26;
+function maxBranchLen(cell) { return Math.max(1, ...(cell.branches || [[]]).map((b) => b.length)); }
+function groupWidth(cell) { return maxBranchLen(cell) * SUBCELL_W + GROUP_MARGIN * 2; }
+function cellWidth(cell) { if (cell && cell.kind === "GROUP") return Math.max(150, groupWidth(cell)); return CELL_W; }
 
 function SimpleContactMarks({ cell, stroke, scale = 1 }) {
   const bx = 12 * scale, by = 13 * scale;
@@ -638,8 +460,7 @@ function SimpleContactMarks({ cell, stroke, scale = 1 }) {
     </>
   );
 }
-// Rendu d'un groupe parallele imbrique : plusieurs branches empilees verticalement,
-// chacune reliee a un rail gauche/droit interne, le tout en serie dans la ligne parente.
+
 function GroupGlyph({ cell, width, values }) {
   const branches = cell.branches || [];
   const B = branches.length;
@@ -676,6 +497,7 @@ function GroupGlyph({ cell, width, values }) {
     </g>
   );
 }
+
 function ContactGlyph({ cell, energized, width, values }) {
   if (!cell || cell.kind === "EMPTY") return null;
   if (cell.kind === "GROUP") return <GroupGlyph cell={cell} width={width || groupWidth(cell)} values={values} />;
@@ -703,6 +525,7 @@ function ContactGlyph({ cell, energized, width, values }) {
     </g>
   );
 }
+
 function OutputGlyph({ output, energized, simValues }) {
   if (!output || output.kind === "NONE") {
     return <text y={5} textAnchor="middle" className="ladder-label-dim">+ sortie</text>;
@@ -740,23 +563,12 @@ function OutputGlyph({ output, energized, simValues }) {
   );
 }
 
-/* ============================================================
-   NetworkView — rendu SVG d'un reseau Ladder
-   ============================================================ */
-const CELL_W = 92, CELL_H = 64, RAIL_PAD = 26, OUT_W = 100, PAD_V = 26;
-function NetworkView({ net, sim, onCellClick, onOutputClick }) {
-  const rows = net.rows;
-  const R = rows.length;
-  const cols = net.cols;
-  // Largeur de chaque colonne = la plus large cellule de cette colonne, toutes lignes confondues
-  // (necessaire car une cellule GROUP prend plus de place qu'un contact simple).
-  const colWidths = Array.from({ length: cols }, (_, ci) =>
-    Math.max(CELL_W, ...rows.map((r) => cellWidth(r.cells[ci])))
-  );
-  const colX = [RAIL_PAD];
-  colWidths.forEach((w) => colX.push(colX[colX.length - 1] + w));
-  const mergeX = colX[cols];
-  const width = mergeX + OUT_W + RAIL_PAD;
+// --- Vue réseau compacte (tous les réseaux sur une seule feuille) ---
+function MiniNetworkView({ net, sim, onCellClick, onOutputClick }) {
+  const rows = net.rows; const R = rows.length; const cols = net.cols;
+  const colWidths = Array.from({ length: cols }, (_, ci) => Math.max(CELL_W, ...rows.map((r) => cellWidth(r.cells[ci]))));
+  const colX = [RAIL_PAD]; colWidths.forEach((w) => colX.push(colX[colX.length - 1] + w));
+  const mergeX = colX[cols]; const width = mergeX + OUT_W + RAIL_PAD;
   const height = PAD_V * 2 + R * CELL_H;
   const rightRailX = width - RAIL_PAD;
   const rowY = (i) => PAD_V + i * CELL_H + CELL_H / 2;
@@ -766,9 +578,8 @@ function NetworkView({ net, sim, onCellClick, onOutputClick }) {
   const midY = (topY + botY) / 2;
   const outEnergized = !!(visual && visual.merged);
   const values = sim && sim.values;
-
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} style={{ display: "block" }}>
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} style={{ display: "block", margin: "0 auto" }}>
       <line x1={RAIL_PAD} y1={busTop} x2={RAIL_PAD} y2={busBot} stroke="var(--bp-rail)" strokeWidth={3} />
       <line x1={mergeX} y1={busTop} x2={mergeX} y2={busBot} stroke="var(--bp-line-strong)" strokeWidth={2} />
       <line x1={rightRailX} y1={busTop} x2={rightRailX} y2={busBot} stroke="var(--bp-rail)" strokeWidth={3} />
@@ -778,9 +589,7 @@ function NetworkView({ net, sim, onCellClick, onOutputClick }) {
         return (
           <g key={row.id}>
             {row.cells.map((cell, ci) => {
-              const x0 = colX[ci];
-              const w = colWidths[ci];
-              const cx = x0 + w / 2;
+              const x0 = colX[ci]; const w = colWidths[ci]; const cx = x0 + w / 2;
               const segOn = !!stagePowers[ci];
               return (
                 <g key={cell.id}>
@@ -810,40 +619,23 @@ function NetworkView({ net, sim, onCellClick, onOutputClick }) {
   );
 }
 
-/* ============================================================
-   Inspecteur — edition d'une cellule / sortie selectionnee
-   ============================================================ */
+// --- Inspecteur (édition d'un élément sélectionné) ---
 const BODY_KINDS = [
-  { kind: "EMPTY", label: "Vide (effacer)" },
-  { kind: "NO", label: "Contact NO" },
-  { kind: "NC", label: "Contact NF" },
-  { kind: "P", label: "Front montant (P)" },
-  { kind: "N", label: "Front descendant (N)" },
-  { kind: "CMP", label: "Comparateur" },
-  { kind: "XOR", label: "OU exclusif (XOR)" },
-  { kind: "GROUP", label: "Groupe parallele (imbrique)" },
+  { kind: "EMPTY", label: "Vide" }, { kind: "NO", label: "Contact NO" }, { kind: "NC", label: "Contact NF" },
+  { kind: "P", label: "Front montant" }, { kind: "N", label: "Front descendant" },
+  { kind: "CMP", label: "Comparateur" }, { kind: "XOR", label: "OU exclusif" }, { kind: "GROUP", label: "Groupe parallèle" },
 ];
 const OUTPUT_KINDS = [
-  { kind: "NONE", label: "Aucune sortie" },
-  { kind: "COIL", label: "Bobine" },
-  { kind: "COIL_INV", label: "Bobine inversee" },
-  { kind: "SET", label: "Bobine Set (S)" },
-  { kind: "RESET", label: "Bobine Reset (R)" },
-  { kind: "TON", label: "Temporisateur TON" },
-  { kind: "TOF", label: "Temporisateur TOF" },
-  { kind: "TP", label: "Temporisateur TP" },
-  { kind: "CTU", label: "Compteur CTU" },
-  { kind: "CTD", label: "Compteur CTD" },
+  { kind: "NONE", label: "Aucune" }, { kind: "COIL", label: "Bobine" }, { kind: "COIL_INV", label: "Bobine inv." },
+  { kind: "SET", label: "Set" }, { kind: "RESET", label: "Reset" },
+  { kind: "TON", label: "TON" }, { kind: "TOF", label: "TOF" }, { kind: "TP", label: "TP" },
+  { kind: "CTU", label: "CTU" }, { kind: "CTD", label: "CTD" },
 ];
 const SUBCELL_KINDS = [
-  { kind: "EMPTY", label: "Vide" },
-  { kind: "NO", label: "NO" },
-  { kind: "NC", label: "NF" },
-  { kind: "P", label: "Front montant" },
-  { kind: "N", label: "Front descendant" },
+  { kind: "EMPTY", label: "Vide" }, { kind: "NO", label: "NO" }, { kind: "NC", label: "NF" },
+  { kind: "P", label: "Front P" }, { kind: "N", label: "Front N" },
 ];
-// Editeur du contenu d'un groupe parallele : une branche = une serie de contacts simples,
-// plusieurs branches = un OU imbrique a l'interieur de la ligne parente.
+
 function GroupInspector({ cell, onChange }) {
   const branches = cell.branches || [];
   const setBranches = (next) => onChange(next);
@@ -852,19 +644,16 @@ function GroupInspector({ cell, onChange }) {
   const addContact = (bi) => setBranches(branches.map((b, i) => i !== bi ? b : [...b, makeCell("NO", "I0.0")]));
   const removeContact = (bi, ci) => setBranches(branches.map((b, i) => i !== bi ? b : (b.length > 1 ? b.filter((_, j) => j !== ci) : b)));
   const patchContact = (bi, ci, patch) => setBranches(branches.map((b, i) => i !== bi ? b : b.map((c, j) => j !== ci ? c : { ...c, ...patch })));
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, borderTop: "1px solid var(--bp-line)", paddingTop: 10 }}>
-      <div style={{ fontSize: 11, color: "var(--bp-text-dim)", lineHeight: 1.4 }}>
-        Chaque branche = des contacts en serie. Les branches entre elles sont en OU (parallele).
-      </div>
+      <div style={{ fontSize: 11, color: "var(--bp-text-dim)", lineHeight: 1.4 }}>Branches en OU, contacts en série dans chaque branche.</div>
       {branches.map((branch, bi) => (
         <div key={bi} style={{ background: "var(--bp-canvas)", border: "1px solid var(--bp-line)", borderRadius: 6, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 11, color: "var(--bp-text-dim)" }}>Branche {bi + 1}</span>
             <div style={{ display: "flex", gap: 4 }}>
-              <button onClick={() => addContact(bi)} title="Ajouter un contact en serie" style={{ background: "none", border: "none", color: "var(--bp-amber)", cursor: "pointer" }}><Plus size={13} /></button>
-              <button onClick={() => removeBranch(bi)} disabled={branches.length <= 1} title="Supprimer cette branche" style={{ background: "none", border: "none", color: "var(--bp-alarm)", cursor: branches.length <= 1 ? "not-allowed" : "pointer", opacity: branches.length <= 1 ? 0.35 : 1 }}><Trash2 size={13} /></button>
+              <button onClick={() => addContact(bi)} title="Ajouter contact" style={{ background: "none", border: "none", color: "var(--bp-amber)", cursor: "pointer" }}>＋</button>
+              <button onClick={() => removeBranch(bi)} disabled={branches.length <= 1} title="Supprimer" style={{ background: "none", border: "none", color: "var(--bp-alarm)", cursor: branches.length <= 1 ? "not-allowed" : "pointer", opacity: branches.length <= 1 ? 0.35 : 1 }}>✕</button>
             </div>
           </div>
           {branch.map((sc, ci) => (
@@ -872,28 +661,21 @@ function GroupInspector({ cell, onChange }) {
               <select className="plcs-select" style={{ fontSize: 11, padding: "3px 4px" }} value={sc.kind} onChange={(e) => patchContact(bi, ci, { kind: e.target.value })}>
                 {SUBCELL_KINDS.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
               </select>
-              <input className="plcs-input" style={{ fontSize: 11, padding: "3px 5px" }} value={sc.address} placeholder="I0.0"
-                onChange={(e) => patchContact(bi, ci, { address: e.target.value })} />
-              <button onClick={() => removeContact(bi, ci)} disabled={branch.length <= 1} style={{ background: "none", border: "none", color: "var(--bp-alarm)", cursor: branch.length <= 1 ? "not-allowed" : "pointer", opacity: branch.length <= 1 ? 0.35 : 1 }}><X size={12} /></button>
+              <input className="plcs-input" style={{ fontSize: 11, padding: "3px 5px" }} value={sc.address} placeholder="I0.0" onChange={(e) => patchContact(bi, ci, { address: e.target.value })} />
+              <button onClick={() => removeContact(bi, ci)} disabled={branch.length <= 1} style={{ background: "none", border: "none", color: "var(--bp-alarm)", cursor: branch.length <= 1 ? "not-allowed" : "pointer", opacity: branch.length <= 1 ? 0.35 : 1 }}>✕</button>
             </div>
           ))}
         </div>
       ))}
-      <Btn onClick={addBranch}><Plus size={13} /> Ajouter une branche parallele</Btn>
+      <Btn onClick={addBranch}>＋ Ajouter une branche</Btn>
     </div>
   );
 }
+
 function Inspector({ selection, project, updateCell, updateOutput }) {
-  if (!selection) {
-    return (
-      <div style={{ fontSize: 12.5, color: "var(--bp-text-dim)", lineHeight: 1.5 }}>
-        Cliquez sur un contact ou une sortie du schema pour le configurer.
-      </div>
-    );
-  }
+  if (!selection) return <div style={{ fontSize: 12.5, color: "var(--bp-text-dim)", lineHeight: 1.5 }}>Cliquez sur un élément pour le configurer.</div>;
   const net = project.networks.find((n) => n.id === selection.networkId);
   if (!net) return null;
-
   if (selection.type === "cell") {
     const row = net.rows.find((r) => r.id === selection.rowId);
     const cell = row.cells[selection.colIndex];
@@ -901,171 +683,115 @@ function Inspector({ selection, project, updateCell, updateOutput }) {
       if (kind === "GROUP") {
         const defaultAddr = cell.address || "I0.0";
         updateCell(net.id, row.id, selection.colIndex, { kind, branches: [[makeCell("NO", defaultAddr)], [makeCell("NO", defaultAddr)]] });
-      } else {
-        updateCell(net.id, row.id, selection.colIndex, { kind, branches: null });
-      }
+      } else updateCell(net.id, row.id, selection.colIndex, { kind, branches: null });
     };
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <div className="plcs-panel-title">Element ({net.comment || "reseau"})</div>
+        <div className="plcs-panel-title">Élément</div>
         <Field label="Type">
           <select className="plcs-select" value={cell.kind} onChange={(e) => onTypeChange(e.target.value)}>
             {BODY_KINDS.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
           </select>
         </Field>
         {cell.kind !== "EMPTY" && cell.kind !== "GROUP" && (
-          <Field label={cell.kind === "CMP" ? "Adresse (variable)" : "Adresse"}>
-            <input className="plcs-input" value={cell.address} placeholder="I0.0, M3, T0..."
-              onChange={(e) => updateCell(net.id, row.id, selection.colIndex, { address: e.target.value })} />
+          <Field label={cell.kind === "CMP" ? "Adresse" : "Adresse"}>
+            <input className="plcs-input" value={cell.address} placeholder="I0.0, M3..." onChange={(e) => updateCell(net.id, row.id, selection.colIndex, { address: e.target.value })} />
           </Field>
         )}
-        {cell.kind === "CMP" && (
-          <>
-            <Field label="Operateur">
-              <select className="plcs-select" value={cell.op} onChange={(e) => updateCell(net.id, row.id, selection.colIndex, { op: e.target.value })}>
-                {[">", "<", ">=", "<=", "==", "!="].map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </Field>
-            <Field label="Valeur de comparaison">
-              <input className="plcs-input" value={cell.value} onChange={(e) => updateCell(net.id, row.id, selection.colIndex, { value: e.target.value })} />
-            </Field>
-          </>
-        )}
-        {cell.kind === "XOR" && (
-          <Field label="Seconde adresse">
-            <input className="plcs-input" value={cell.address2} onChange={(e) => updateCell(net.id, row.id, selection.colIndex, { address2: e.target.value })} />
+        {cell.kind === "CMP" && (<>
+          <Field label="Opérateur">
+            <select className="plcs-select" value={cell.op} onChange={(e) => updateCell(net.id, row.id, selection.colIndex, { op: e.target.value })}>
+              {[">", "<", ">=", "<=", "==", "!="].map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
           </Field>
-        )}
-        {cell.kind === "GROUP" && (
-          <GroupInspector cell={cell}
-            onChange={(branches) => updateCell(net.id, row.id, selection.colIndex, { branches })} />
-        )}
+          <Field label="Valeur"><input className="plcs-input" value={cell.value} onChange={(e) => updateCell(net.id, row.id, selection.colIndex, { value: e.target.value })} /></Field>
+        </>)}
+        {cell.kind === "XOR" && <Field label="2e adresse"><input className="plcs-input" value={cell.address2} onChange={(e) => updateCell(net.id, row.id, selection.colIndex, { address2: e.target.value })} /></Field>}
+        {cell.kind === "GROUP" && <GroupInspector cell={cell} onChange={(branches) => updateCell(net.id, row.id, selection.colIndex, { branches })} />}
       </div>
     );
   }
-
   const out = net.output;
   const isTimer = ["TON", "TOF", "TP"].includes(out.kind);
   const isCounter = ["CTU", "CTD"].includes(out.kind);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div className="plcs-panel-title">Sortie ({net.comment || "reseau"})</div>
+      <div className="plcs-panel-title">Sortie</div>
       <Field label="Type">
         <select className="plcs-select" value={out.kind} onChange={(e) => updateOutput(net.id, { kind: e.target.value })}>
           {OUTPUT_KINDS.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
         </select>
       </Field>
-      {out.kind !== "NONE" && (
-        <Field label="Adresse">
-          <input className="plcs-input" value={out.address} placeholder={isTimer ? "T0" : isCounter ? "C0" : "Q0.0 / M0"}
-            onChange={(e) => updateOutput(net.id, { address: e.target.value })} />
-        </Field>
-      )}
-      {isTimer && (
-        <Field label="Consigne (ms)">
-          <input className="plcs-input" type="number" min={0} value={out.preset} onChange={(e) => updateOutput(net.id, { preset: parseInt(e.target.value || "0", 10) })} />
-        </Field>
-      )}
-      {isCounter && (
-        <>
-          <Field label="Consigne (coups)">
-            <input className="plcs-input" type="number" min={0} value={out.preset} onChange={(e) => updateOutput(net.id, { preset: parseInt(e.target.value || "0", 10) })} />
-          </Field>
-          <Field label="Adresse de reset (optionnel)">
-            <input className="plcs-input" value={out.resetAddress} placeholder="I0.3" onChange={(e) => updateOutput(net.id, { resetAddress: e.target.value })} />
-          </Field>
-        </>
-      )}
+      {out.kind !== "NONE" && <Field label="Adresse"><input className="plcs-input" value={out.address} placeholder={isTimer ? "T0" : isCounter ? "C0" : "Q0.0"} onChange={(e) => updateOutput(net.id, { address: e.target.value })} /></Field>}
+      {isTimer && <Field label="Consigne (ms)"><input className="plcs-input" type="number" min={0} value={out.preset} onChange={(e) => updateOutput(net.id, { preset: parseInt(e.target.value || "0", 10) })} /></Field>}
+      {isCounter && (<>
+        <Field label="Consigne"><input className="plcs-input" type="number" min={0} value={out.preset} onChange={(e) => updateOutput(net.id, { preset: parseInt(e.target.value || "0", 10) })} /></Field>
+        <Field label="Reset"><input className="plcs-input" value={out.resetAddress} placeholder="I0.3" onChange={(e) => updateOutput(net.id, { resetAddress: e.target.value })} /></Field>
+      </>)}
     </div>
   );
 }
 
-/* ============================================================
-   Palette d'outils
-   ============================================================ */
+// --- Palette d'outils ---
 const BODY_TOOLS = [
-  { kind: "NO", label: "Contact NO" },
-  { kind: "NC", label: "Contact NF" },
-  { kind: "P", label: "Front montant" },
-  { kind: "N", label: "Front descendant" },
-  { kind: "CMP", label: "Comparateur" },
-  { kind: "XOR", label: "OU exclusif" },
-  { kind: "GROUP", label: "Groupe // (imbrique)" },
+  { kind: "NO", label: "Contact NO" }, { kind: "NC", label: "Contact NF" }, { kind: "P", label: "Front P" },
+  { kind: "N", label: "Front N" }, { kind: "CMP", label: "Comparateur" }, { kind: "XOR", label: "XOR" }, { kind: "GROUP", label: "Groupe //" },
 ];
 const OUTPUT_TOOLS = [
-  { kind: "COIL", label: "Bobine" },
-  { kind: "COIL_INV", label: "Bobine inv." },
-  { kind: "SET", label: "Set (S)" },
-  { kind: "RESET", label: "Reset (R)" },
-  { kind: "TON", label: "TON" },
-  { kind: "TOF", label: "TOF" },
-  { kind: "TP", label: "TP" },
-  { kind: "CTU", label: "CTU" },
-  { kind: "CTD", label: "CTD" },
+  { kind: "COIL", label: "Bobine" }, { kind: "COIL_INV", label: "Bobine inv." }, { kind: "SET", label: "Set" }, { kind: "RESET", label: "Reset" },
+  { kind: "TON", label: "TON" }, { kind: "TOF", label: "TOF" }, { kind: "TP", label: "TP" }, { kind: "CTU", label: "CTU" }, { kind: "CTD", label: "CTD" },
 ];
+
 function Palette({ tool, setTool, ioMap, setIoMap }) {
   const addIoRow = () => setIoMap([...ioMap, { addr: "M" + ioMap.length, pin: "D" + (12 + ioMap.length), kind: "DI" }]);
   const updateIo = (i, patch) => setIoMap(ioMap.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const removeIo = (i) => setIoMap(ioMap.filter((_, idx) => idx !== i));
   return (
-    <div className="plcs-scroll" style={{ overflowY: "auto", overflowX: "hidden", height: "100%", padding: 14, display: "flex", flexDirection: "column", gap: 18 }}>
+    <div className="plcs-scroll" style={{ overflowY: "auto", height: "100%", padding: 14, display: "flex", flexDirection: "column", gap: 18 }}>
       <div>
-        <div className="plcs-panel-title">Contacts (corps de reseau)</div>
+        <div className="plcs-panel-title">Contacts</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-          {BODY_TOOLS.map((t) => (
-            <Btn key={t.kind} active={tool === t.kind} onClick={() => setTool(tool === t.kind ? null : t.kind)}>{t.label}</Btn>
-          ))}
+          {BODY_TOOLS.map((t) => <Btn key={t.kind} active={tool === t.kind} onClick={() => setTool(tool === t.kind ? null : t.kind)}>{t.label}</Btn>)}
         </div>
       </div>
       <div>
-        <div className="plcs-panel-title">Sorties (fin de reseau)</div>
+        <div className="plcs-panel-title">Sorties</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-          {OUTPUT_TOOLS.map((t) => (
-            <Btn key={t.kind} active={tool === "OUT_" + t.kind} onClick={() => setTool(tool === "OUT_" + t.kind ? null : "OUT_" + t.kind)}>{t.label}</Btn>
-          ))}
+          {OUTPUT_TOOLS.map((t) => <Btn key={t.kind} active={tool === "OUT_" + t.kind} onClick={() => setTool(tool === "OUT_" + t.kind ? null : "OUT_" + t.kind)}>{t.label}</Btn>)}
         </div>
       </div>
       <div>
-        <div className="plcs-panel-title">Outil</div>
-        <Btn active={tool === "ERASE"} onClick={() => setTool(tool === "ERASE" ? null : "ERASE")} variant={tool === "ERASE" ? "danger" : ""}>
-          <Eraser size={14} /> Effacer un element
-        </Btn>
+        <Btn active={tool === "ERASE"} onClick={() => setTool(tool === "ERASE" ? null : "ERASE")} variant={tool === "ERASE" ? "danger" : ""}>⌫ Effacer</Btn>
       </div>
       <div>
         <div className="plcs-panel-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span>Configuration E/S</span>
-          <button onClick={addIoRow} title="Ajouter une adresse" style={{ background: "none", border: "none", color: "var(--bp-amber)", cursor: "pointer" }}><Plus size={14} /></button>
+          <span>E/S</span>
+          <button onClick={addIoRow} style={{ background: "none", border: "none", color: "var(--bp-amber)", cursor: "pointer" }}>＋</button>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {ioMap.map((row, i) => (
-            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4, background: "var(--bp-canvas)", border: "1px solid var(--bp-line)", borderRadius: 5, padding: 6 }}>
-              <div style={{ display: "flex", gap: 4 }}>
-                <input className="plcs-input" style={{ minWidth: 0, flex: 1, padding: "4px 5px", fontSize: 11 }} value={row.addr} placeholder="Adresse" onChange={(e) => updateIo(i, { addr: e.target.value })} />
-                <input className="plcs-input" style={{ minWidth: 0, width: 52, padding: "4px 5px", fontSize: 11 }} value={row.pin} placeholder="Pin" onChange={(e) => updateIo(i, { pin: e.target.value })} />
-              </div>
-              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                <select className="plcs-select" style={{ minWidth: 0, flex: 1, padding: "4px 3px", fontSize: 11 }} value={row.kind} onChange={(e) => updateIo(i, { kind: e.target.value })}>
-                  <option value="DI">Entree TOR</option>
-                  <option value="DO">Sortie TOR</option>
-                  <option value="AI">Entree analog.</option>
-                  <option value="AQ">Sortie PWM</option>
-                </select>
-                <button onClick={() => removeIo(i)} style={{ background: "none", border: "none", color: "var(--bp-alarm)", cursor: "pointer", flexShrink: 0 }}><X size={13} /></button>
-              </div>
+        {ioMap.map((row, i) => (
+          <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4, background: "var(--bp-canvas)", border: "1px solid var(--bp-line)", borderRadius: 5, padding: 6, marginTop: 4 }}>
+            <div style={{ display: "flex", gap: 4 }}>
+              <input className="plcs-input" style={{ minWidth: 0, flex: 1, padding: "4px 5px", fontSize: 11 }} value={row.addr} placeholder="Adresse" onChange={(e) => updateIo(i, { addr: e.target.value })} />
+              <input className="plcs-input" style={{ minWidth: 0, width: 52, padding: "4px 5px", fontSize: 11 }} value={row.pin} placeholder="Pin" onChange={(e) => updateIo(i, { pin: e.target.value })} />
             </div>
-          ))}
-        </div>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <select className="plcs-select" style={{ minWidth: 0, flex: 1, padding: "4px 3px", fontSize: 11 }} value={row.kind} onChange={(e) => updateIo(i, { kind: e.target.value })}>
+                <option value="DI">DI</option><option value="DO">DO</option><option value="AI">AI</option><option value="AQ">AQ</option>
+              </select>
+              <button onClick={() => removeIo(i)} style={{ background: "none", border: "none", color: "var(--bp-alarm)", cursor: "pointer" }}>✕</button>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-/* ============================================================
-   Panneau de surveillance (Watch) + E/S virtuelles
-   ============================================================ */
+// --- Panneau de surveillance ---
 function LED({ on, color = "var(--bp-energized)" }) {
   return <span style={{ width: 10, height: 10, borderRadius: "50%", display: "inline-block", background: on ? color : "var(--bp-line)", boxShadow: on ? `0 0 6px ${color}` : "none", flexShrink: 0 }} />;
 }
+
 function WatchPanel({ project, sim, writeBool, writeNum, onRun, onStop, onReset }) {
   const diIo = project.ioMap.filter((i) => i.kind === "DI");
   const aiIo = project.ioMap.filter((i) => i.kind === "AI");
@@ -1074,138 +800,72 @@ function WatchPanel({ project, sim, writeBool, writeNum, onRun, onStop, onReset 
   const mAddrs = boolAddrs.filter((a) => a.startsWith("M"));
   const { timers, counters } = collectTimersCounters(project);
   const v = sim.values;
-
   return (
     <div className="plcs-scroll" style={{ overflowY: "auto", height: "100%", padding: 14, display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", gap: 8 }}>
-        {!sim.running ? (
-          <Btn variant="primary" onClick={onRun} className="plcs-mono"><Play size={14} /> Lancer la simulation</Btn>
-        ) : (
-          <Btn variant="danger" onClick={onStop}><Square size={14} /> Arreter</Btn>
-        )}
-        <Btn onClick={onReset} title="Reinitialiser les valeurs"><RotateCcw size={14} /></Btn>
+        {!sim.running ? <Btn variant="primary" onClick={onRun} className="plcs-mono">▶ Lancer</Btn> : <Btn variant="danger" onClick={onStop}>■ Arrêter</Btn>}
+        <Btn onClick={onReset} title="Reset">↺</Btn>
       </div>
-      <div style={{ fontSize: 11, color: "var(--bp-text-dim)" }}>
-        Cycle de scan : <span className="plcs-mono" style={{ color: "var(--bp-blue)" }}>{SCAN_MS} ms</span> · {sim.running ? <span style={{ color: "var(--bp-energized)" }}>en cours</span> : "arretee"}
-      </div>
-
+      <div style={{ fontSize: 11, color: "var(--bp-text-dim)" }}>Scan: {SCAN_MS}ms · {sim.running ? <span style={{ color: "var(--bp-energized)" }}>actif</span> : "arrêté"}</div>
       <div>
-        <div className="plcs-panel-title">Entrees virtuelles (TOR)</div>
-        {diIo.length === 0 && <div style={{ fontSize: 11.5, color: "var(--bp-text-dim)" }}>Aucune entree configuree.</div>}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {diIo.map((io) => (
-            <div key={io.addr} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span className="plcs-mono" style={{ fontSize: 12 }}>{io.addr} <span style={{ color: "var(--bp-text-dim)" }}>({io.pin})</span></span>
-              <Switch on={!!v.I[io.addr]} onClick={() => writeBool(io.addr, !v.I[io.addr])} />
-            </div>
-          ))}
-        </div>
+        <div className="plcs-panel-title">Entrées TOR</div>
+        {diIo.map((io) => (
+          <div key={io.addr} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <span className="plcs-mono" style={{ fontSize: 12 }}>{io.addr} ({io.pin})</span>
+            <Switch on={!!v.I[io.addr]} onClick={() => writeBool(io.addr, !v.I[io.addr])} />
+          </div>
+        ))}
       </div>
-
       {aiIo.length > 0 && (
         <div>
-          <div className="plcs-panel-title">Entrees analogiques</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {aiIo.map((io) => (
-              <div key={io.addr}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
-                  <span className="plcs-mono">{io.addr}</span>
-                  <span className="plcs-mono" style={{ color: "var(--bp-blue)" }}>{v.AI[io.addr] || 0}</span>
-                </div>
-                <input type="range" min={0} max={1023} value={v.AI[io.addr] || 0} onChange={(e) => writeNum(io.addr, parseInt(e.target.value, 10))} style={{ width: "100%" }} />
+          <div className="plcs-panel-title">Entrées analog.</div>
+          {aiIo.map((io) => (
+            <div key={io.addr}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
+                <span className="plcs-mono">{io.addr}</span><span className="plcs-mono" style={{ color: "var(--bp-blue)" }}>{v.AI[io.addr] || 0}</span>
               </div>
-            ))}
-          </div>
+              <input type="range" min={0} max={1023} value={v.AI[io.addr] || 0} onChange={(e) => writeNum(io.addr, parseInt(e.target.value, 10))} style={{ width: "100%" }} />
+            </div>
+          ))}
         </div>
       )}
-
       <div>
         <div className="plcs-panel-title">Sorties</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {qAddrs.length === 0 && <div style={{ fontSize: 11.5, color: "var(--bp-text-dim)" }}>Aucune sortie utilisee.</div>}
-          {qAddrs.map((a) => (
-            <div key={a} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span className="plcs-mono" style={{ fontSize: 12 }}>{a}</span>
-              <LED on={!!v.Q[a]} />
-            </div>
-          ))}
-        </div>
+        {qAddrs.map((a) => <div key={a} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}><span className="plcs-mono" style={{ fontSize: 12 }}>{a}</span><LED on={!!v.Q[a]} /></div>)}
       </div>
-
       <div>
-        <div className="plcs-panel-title">Memoires internes</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {mAddrs.length === 0 && <div style={{ fontSize: 11.5, color: "var(--bp-text-dim)" }}>Aucune memoire utilisee.</div>}
-          {mAddrs.map((a) => (
-            <div key={a} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span className="plcs-mono" style={{ fontSize: 12 }}>{a}</span>
-              <Switch on={!!v.M[a]} onClick={() => writeBool(a, !v.M[a])} />
-            </div>
-          ))}
-        </div>
+        <div className="plcs-panel-title">Mémoires</div>
+        {mAddrs.map((a) => <div key={a} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}><span className="plcs-mono" style={{ fontSize: 12 }}>{a}</span><Switch on={!!v.M[a]} onClick={() => writeBool(a, !v.M[a])} /></div>)}
       </div>
-
       {timers.length > 0 && (
         <div>
           <div className="plcs-panel-title">Temporisateurs</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {timers.map((t) => {
-              const st = v.T[parseAddress(t.addr).key] || { ET: 0, Q: false };
-              const pct = clamp((st.ET / (t.preset || 1)) * 100, 0, 100);
-              return (
-                <div key={t.addr}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
-                    <span className="plcs-mono">{t.addr} <span style={{ color: "var(--bp-text-dim)" }}>{t.kind}</span></span>
-                    <LED on={st.Q} color="var(--bp-blue)" />
-                  </div>
-                  <div style={{ height: 5, background: "var(--bp-panel-raised)", borderRadius: 3, overflow: "hidden", marginTop: 3 }}>
-                    <div style={{ height: "100%", width: pct + "%", background: "var(--bp-blue)" }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          {timers.map((t) => {
+            const st = v.T[parseAddress(t.addr).key] || { ET: 0, Q: false };
+            const pct = clamp((st.ET / (t.preset || 1)) * 100, 0, 100);
+            return (
+              <div key={t.addr}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5 }}><span className="plcs-mono">{t.addr} {t.kind}</span><LED on={st.Q} color="var(--bp-blue)" /></div>
+                <div style={{ height: 5, background: "var(--bp-panel-raised)", borderRadius: 3, overflow: "hidden", marginTop: 3 }}><div style={{ height: "100%", width: pct + "%", background: "var(--bp-blue)" }} /></div>
+              </div>
+            );
+          })}
         </div>
       )}
-
       {counters.length > 0 && (
         <div>
           <div className="plcs-panel-title">Compteurs</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {counters.map((c) => {
-              const st = v.C[parseAddress(c.addr).key] || { CV: 0, Q: false };
-              return (
-                <div key={c.addr} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span className="plcs-mono" style={{ fontSize: 12 }}>{c.addr} <span style={{ color: "var(--bp-text-dim)" }}>{c.kind}</span></span>
-                  <span className="plcs-mono" style={{ fontSize: 12, color: "var(--bp-blue)" }}>{st.CV}/{c.preset}</span>
-                </div>
-              );
-            })}
-          </div>
+          {counters.map((c) => {
+            const st = v.C[parseAddress(c.addr).key] || { CV: 0, Q: false };
+            return <div key={c.addr} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span className="plcs-mono" style={{ fontSize: 12 }}>{c.addr} {c.kind}</span><span className="plcs-mono" style={{ fontSize: 12, color: "var(--bp-blue)" }}>{st.CV}/{c.preset}</span></div>;
+          })}
         </div>
       )}
     </div>
   );
 }
 
-/* ============================================================
-   Onglet Ladder
-   ============================================================ */
-function NetworkToolbar({ net, onAddRow, onRemoveRow, onAddCol, onRemoveCol, onDelete, onComment }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: "var(--bp-panel)", borderBottom: "1px solid var(--bp-line)" }}>
-      <input className="plcs-input" style={{ flex: 1, background: "transparent", border: "none", color: "var(--bp-amber)", fontFamily: "IBM Plex Sans" }}
-        value={net.comment} placeholder="Commentaire du reseau..." onChange={(e) => onComment(e.target.value)} />
-      <Btn onClick={onAddRow} title="Ajouter une branche (OU)"><Plus size={12} />branche</Btn>
-      <Btn onClick={onRemoveRow} disabled={net.rows.length <= 1} title="Retirer une branche"><Minus size={12} />branche</Btn>
-      <Btn onClick={onAddCol} title="Ajouter une colonne (ET)"><Plus size={12} />col.</Btn>
-      <Btn onClick={onRemoveCol} disabled={net.cols <= 1} title="Retirer une colonne"><Minus size={12} />col.</Btn>
-      <Btn variant="danger" onClick={onDelete} title="Supprimer ce reseau"><Trash2 size={12} /></Btn>
-    </div>
-  );
-}
-// Hook generique : permet de redimensionner un panneau a la souris (glisser un separateur).
-// invert=true pour un panneau ancre a droite (on tire vers la gauche pour l'agrandir).
+// --- Hook de redimensionnement ---
 function useResizeWidth(initial, min, max, invert) {
   const [width, setWidth] = useState(initial);
   const dragging = useRef(false);
@@ -1223,95 +883,33 @@ function useResizeWidth(initial, min, max, invert) {
     const onMove = (e) => {
       if (!dragging.current) return;
       const delta = e.clientX - startXRef.current;
-      const raw = startWRef.current + (invert ? -delta : delta);
-      setWidth(clamp(raw, min, max));
+      setWidth(clamp(startWRef.current + (invert ? -delta : delta), min, max));
     };
     const onUp = () => {
-      if (!dragging.current) return;
       dragging.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, [min, max, invert]);
   const resetWidth = useCallback(() => setWidth(initial), [initial]);
   return [width, onMouseDown, resetWidth];
 }
+
 function ResizeHandle({ onMouseDown, onDoubleClick, title }) {
   return (
-    <div
-      className="plcs-resize-handle"
-      onMouseDown={onMouseDown}
-      onDoubleClick={onDoubleClick}
-      title={title || "Glisser pour redimensionner (double-clic pour reinitialiser)"}
-    >
+    <div className="plcs-resize-handle" onMouseDown={onMouseDown} onDoubleClick={onDoubleClick} title={title || "Redimensionner"}>
       <div className="plcs-resize-grip" />
     </div>
   );
 }
 
-// Redimensionnement vertical (hauteur) : height=null signifie "auto" (s'adapte au contenu).
-function useResizeHeight(min, max) {
-  const [height, setHeight] = useState(null);
-  const dragging = useRef(false);
-  const startYRef = useRef(0);
-  const startHRef = useRef(0);
-  const contentRef = useRef(null);
-  const onMouseDown = useCallback((e) => {
-    e.preventDefault();
-    dragging.current = true;
-    startYRef.current = e.clientY;
-    startHRef.current = height != null ? height : (contentRef.current ? contentRef.current.offsetHeight : min);
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-  }, [height, min]);
-  useEffect(() => {
-    const onMove = (e) => {
-      if (!dragging.current) return;
-      const delta = e.clientY - startYRef.current;
-      setHeight(clamp(startHRef.current + delta, min, max));
-    };
-    const onUp = () => {
-      if (!dragging.current) return;
-      dragging.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-  }, [min, max]);
-  const resetHeight = useCallback(() => setHeight(null), []);
-  return [height, onMouseDown, resetHeight, contentRef];
-}
-// Une carte-reseau avec une poignee de redimensionnement en bas : par defaut la hauteur
-// s'adapte au contenu, mais l'utilisateur peut la fixer manuellement (defilement interne au besoin).
-function NetworkCard({ net, sim, onCellClick, onOutputClick, onAddRow, onRemoveRow, onAddCol, onRemoveCol, onDelete, onComment }) {
-  const [height, onDrag, resetHeight, contentRef] = useResizeHeight(70, 900);
-  return (
-    <div style={{ background: "rgba(14,32,54,0.85)", border: "1px solid var(--bp-line)", borderRadius: 6, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-      <NetworkToolbar net={net} onAddRow={onAddRow} onRemoveRow={onRemoveRow} onAddCol={onAddCol} onRemoveCol={onRemoveCol} onDelete={onDelete} onComment={onComment} />
-      <div ref={contentRef} className="plcs-scroll" style={{ overflow: "auto", padding: "6px 4px", height: height != null ? height : undefined }}>
-        <NetworkView net={net} sim={sim} onCellClick={onCellClick} onOutputClick={onOutputClick} />
-      </div>
-      <div className="plcs-vresize-handle" onMouseDown={onDrag} onDoubleClick={resetHeight}
-        title={height != null ? `Hauteur : ${height}px — double-clic pour revenir a l'automatique` : "Glisser pour fixer la hauteur de ce reseau"}>
-        <div className="plcs-vresize-grip" />
-      </div>
-    </div>
-  );
-}
-function LadderTab({ project, setProject, tool, setTool, sim, selection, setSelection, writeBool, writeNum, onRun, onStop, onReset }) {
-  const [leftW, leftDrag, resetLeft] = useResizeWidth(240, 170, 440, false);
-  const [rightW, rightDrag, resetRight] = useResizeWidth(260, 210, 480, true);
+// --- Vue Ladder tout-en-un ---
+function LadderAllInOne({ project, setProject, tool, setTool, sim, selection, setSelection, writeBool, writeNum, onRun, onStop, onReset }) {
+  const [leftW, leftDrag, resetLeft] = useResizeWidth(220, 150, 380, false);
+  const [rightW, rightDrag, resetRight] = useResizeWidth(260, 200, 420, true);
   const updateNetworks = (fn) => setProject((p) => ({ ...p, networks: fn(clone(p.networks)) }));
 
   const placeOrSelectCell = (networkId, rowId, colIndex) => {
@@ -1319,33 +917,26 @@ function LadderTab({ project, setProject, tool, setTool, sim, selection, setSele
     const row = net.rows.find((r) => r.id === rowId);
     const cell = row.cells[colIndex];
     if (tool === "ERASE") {
-      updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : {
-        ...n, rows: n.rows.map((r) => r.id !== rowId ? r : { ...r, cells: r.cells.map((c, i) => i !== colIndex ? c : makeCell()) }),
-      }));
+      updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : { ...n, rows: n.rows.map((r) => r.id !== rowId ? r : { ...r, cells: r.cells.map((c, i) => i !== colIndex ? c : makeCell()) }) }));
       return;
     }
     if (tool === "GROUP" && cell.kind === "EMPTY") {
       const defaultAddr = project.ioMap.find((i) => i.kind === "DI")?.addr || "I0.0";
       const group = makeGroupCell();
       group.branches = [[makeCell("NO", defaultAddr)], [makeCell("NO", defaultAddr)]];
-      updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : {
-        ...n, rows: n.rows.map((r) => r.id !== rowId ? r : { ...r, cells: r.cells.map((c, i) => i !== colIndex ? c : group) }),
-      }));
+      updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : { ...n, rows: n.rows.map((r) => r.id !== rowId ? r : { ...r, cells: r.cells.map((c, i) => i !== colIndex ? c : group) }) }));
       setSelection({ type: "cell", networkId, rowId, colIndex });
       return;
     }
     if (tool && BODY_TOOLS.some((t) => t.kind === tool) && cell.kind === "EMPTY") {
       const defaultAddr = project.ioMap.find((i) => i.kind === "DI")?.addr || "I0.0";
-      updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : {
-        ...n, rows: n.rows.map((r) => r.id !== rowId ? r : {
-          ...r, cells: r.cells.map((c, i) => i !== colIndex ? c : makeCell(tool, defaultAddr)),
-        }),
-      }));
+      updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : { ...n, rows: n.rows.map((r) => r.id !== rowId ? r : { ...r, cells: r.cells.map((c, i) => i !== colIndex ? c : makeCell(tool, defaultAddr)) }) }));
       setSelection({ type: "cell", networkId, rowId, colIndex });
       return;
     }
     setSelection({ type: "cell", networkId, rowId, colIndex });
   };
+
   const placeOrSelectOutput = (networkId) => {
     const net = project.networks.find((n) => n.id === networkId);
     if (tool === "ERASE") {
@@ -1357,23 +948,22 @@ function LadderTab({ project, setProject, tool, setTool, sim, selection, setSele
       const isTimer = ["TON", "TOF", "TP"].includes(kind);
       const isCounter = ["CTU", "CTD"].includes(kind);
       const defaultAddr = isTimer ? "T0" : isCounter ? "C0" : (project.ioMap.find((i) => i.kind === "DO")?.addr || "Q0.0");
-      updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : {
-        ...n, output: { kind, address: defaultAddr, preset: isTimer ? 1000 : 5, resetAddress: "" },
-      }));
+      updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : { ...n, output: { kind, address: defaultAddr, preset: isTimer ? 1000 : 5, resetAddress: "" } }));
       setSelection({ type: "output", networkId });
       return;
     }
     setSelection({ type: "output", networkId });
   };
+
   const updateCell = (networkId, rowId, colIndex, patch) => {
-    updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : {
-      ...n, rows: n.rows.map((r) => r.id !== rowId ? r : { ...r, cells: r.cells.map((c, i) => i !== colIndex ? c : { ...c, ...patch }) }),
-    }));
+    updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : { ...n, rows: n.rows.map((r) => r.id !== rowId ? r : { ...r, cells: r.cells.map((c, i) => i !== colIndex ? c : { ...c, ...patch }) }) }));
   };
+
   const updateOutput = (networkId, patch) => {
     updateNetworks((nets) => nets.map((n) => n.id !== networkId ? n : { ...n, output: { ...n.output, ...patch } }));
   };
-  const addNetwork = () => updateNetworks((nets) => [...nets, makeNetwork(3, 1, `Reseau ${nets.length + 1}`)]);
+
+  const addNetwork = () => updateNetworks((nets) => [...nets, makeNetwork(3, 1, `Réseau ${nets.length + 1}`)]);
   const deleteNetwork = (id) => updateNetworks((nets) => nets.filter((n) => n.id !== id));
   const addRow = (id) => updateNetworks((nets) => nets.map((n) => n.id !== id ? n : { ...n, rows: [...n.rows, makeRow(n.cols)] }));
   const removeRow = (id) => updateNetworks((nets) => nets.map((n) => n.id !== id || n.rows.length <= 1 ? n : { ...n, rows: n.rows.slice(0, -1) }));
@@ -1387,20 +977,27 @@ function LadderTab({ project, setProject, tool, setTool, sim, selection, setSele
       <div style={{ width: leftW, flexShrink: 0, background: "var(--bp-panel)" }}>
         <Palette tool={tool} setTool={setTool} ioMap={project.ioMap} setIoMap={setIoMap} />
       </div>
-      <ResizeHandle onMouseDown={leftDrag} onDoubleClick={resetLeft} title="Redimensionner la palette (double-clic pour reinitialiser)" />
-      <div className="plcs-scroll plcs-blueprint-grid" style={{ flex: 1, minWidth: 0, overflow: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
-        {project.networks.map((net) => (
-          <NetworkCard key={net.id} net={net} sim={sim}
-            onCellClick={placeOrSelectCell} onOutputClick={placeOrSelectOutput}
-            onAddRow={() => addRow(net.id)} onRemoveRow={() => removeRow(net.id)}
-            onAddCol={() => addCol(net.id)} onRemoveCol={() => removeCol(net.id)}
-            onDelete={() => deleteNetwork(net.id)} onComment={(t) => setComment(net.id, t)}
-          />
-        ))}
-        <Btn onClick={addNetwork} className="plcs-mono" style={{ alignSelf: "flex-start" }}><Plus size={14} /> Ajouter un reseau</Btn>
+      <ResizeHandle onMouseDown={leftDrag} onDoubleClick={resetLeft} />
+      <div className="plcs-scroll" style={{ flex: 1, minWidth: 0, overflow: "auto", padding: 12, background: "var(--bp-canvas)" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {project.networks.map((net) => (
+            <div key={net.id} className="network-section" style={{ background: "rgba(14,32,54,0.5)", border: "1px solid var(--bp-line)", borderRadius: 3, padding: 4, marginBottom: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 6px", background: "var(--bp-panel)", borderBottom: "1px solid var(--bp-line)", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, color: "var(--bp-amber)", fontWeight: 600, flex: 1, minWidth: 80, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{net.comment}</span>
+                <Btn onClick={() => addRow(net.id)} style={{ padding: "2px 6px", fontSize: 10 }}>+L</Btn>
+                <Btn onClick={() => removeRow(net.id)} disabled={net.rows.length <= 1} style={{ padding: "2px 6px", fontSize: 10 }}>-L</Btn>
+                <Btn onClick={() => addCol(net.id)} style={{ padding: "2px 6px", fontSize: 10 }}>+C</Btn>
+                <Btn onClick={() => removeCol(net.id)} disabled={net.cols <= 1} style={{ padding: "2px 6px", fontSize: 10 }}>-C</Btn>
+                <Btn variant="danger" onClick={() => deleteNetwork(net.id)} style={{ padding: "2px 6px", fontSize: 10 }}>✕</Btn>
+              </div>
+              <MiniNetworkView net={net} sim={sim} onCellClick={placeOrSelectCell} onOutputClick={placeOrSelectOutput} />
+            </div>
+          ))}
+          <Btn onClick={addNetwork} style={{ alignSelf: "flex-start", marginTop: 8 }}>＋ Réseau</Btn>
+        </div>
       </div>
-      <ResizeHandle onMouseDown={rightDrag} onDoubleClick={resetRight} title="Redimensionner le panneau (double-clic pour reinitialiser)" />
-      <div style={{ width: rightW, flexShrink: 0, background: "var(--bp-panel)", display: "flex", flexDirection: "column" }}>
+      <ResizeHandle onMouseDown={rightDrag} onDoubleClick={resetRight} />
+      <div style={{ width: rightW, flexShrink: 0, background: "var(--bp-panel)", display: "flex", flexDirection: "column", borderLeft: "2px solid #111" }}>
         <div style={{ padding: 14, borderBottom: "1px solid var(--bp-line)" }}>
           <Inspector selection={selection} project={project} updateCell={updateCell} updateOutput={updateOutput} />
         </div>
@@ -1413,172 +1010,9 @@ function LadderTab({ project, setProject, tool, setTool, sim, selection, setSele
 }
 
 /* ============================================================
-   Onglet HMI / SCADA
+   Composant principal App
    ============================================================ */
-const HMI_TYPES = [
-  { type: "BUTTON", label: "Bouton (momentane)" },
-  { type: "SWITCH", label: "Selecteur (bascule)" },
-  { type: "LIGHT", label: "Voyant" },
-  { type: "GAUGE", label: "Jauge" },
-  { type: "NUMBER", label: "Afficheur numerique" },
-  { type: "CHART", label: "Graphique temps reel" },
-];
-function HmiWidgetCard({ widget, sim, writeBool, onUpdate, onRemove, history }) {
-  const boolVal = getBool(sim.values, widget.address);
-  const numVal = getNum(sim.values, widget.address);
-  return (
-    <div style={{ background: "var(--bp-panel-raised)", border: "1px solid var(--bp-line)", borderRadius: 8, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
-        <input className="plcs-input" style={{ background: "transparent", border: "none", padding: 0, fontFamily: "IBM Plex Sans", fontWeight: 600, fontSize: 13, color: "var(--bp-text)" }}
-          value={widget.label} onChange={(e) => onUpdate({ label: e.target.value })} />
-        <button onClick={onRemove} style={{ background: "none", border: "none", color: "var(--bp-alarm)", cursor: "pointer" }}><X size={14} /></button>
-      </div>
-
-      <div style={{ minHeight: 70, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {widget.type === "BUTTON" && (
-          <button
-            onMouseDown={() => writeBool(widget.address, true)}
-            onMouseUp={() => writeBool(widget.address, false)}
-            onMouseLeave={() => writeBool(widget.address, false)}
-            className="plcs-btn primary" style={{ padding: "12px 26px", fontSize: 13 }}>
-            <Zap size={14} /> {widget.address || "..."}
-          </button>
-        )}
-        {widget.type === "SWITCH" && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span className="plcs-mono" style={{ fontSize: 12 }}>{widget.address || "..."}</span>
-            <Switch on={boolVal} onClick={() => writeBool(widget.address, !boolVal)} />
-          </div>
-        )}
-        {widget.type === "LIGHT" && (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-            <div style={{ width: 42, height: 42, borderRadius: "50%", background: boolVal ? "var(--bp-energized)" : "var(--bp-canvas)", border: "2px solid var(--bp-line-strong)", boxShadow: boolVal ? "0 0 14px var(--bp-energized)" : "none" }} />
-            <span className="plcs-mono" style={{ fontSize: 11, color: "var(--bp-text-dim)" }}>{widget.address || "..."}</span>
-          </div>
-        )}
-        {widget.type === "GAUGE" && (
-          <div style={{ width: "100%" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-              <span className="plcs-mono" style={{ color: "var(--bp-text-dim)" }}>{widget.address || "..."}</span>
-              <span className="plcs-mono" style={{ color: "var(--bp-blue)" }}>{Math.round(numVal)}</span>
-            </div>
-            <div style={{ height: 10, background: "var(--bp-canvas)", borderRadius: 5, overflow: "hidden", marginTop: 6, border: "1px solid var(--bp-line)" }}>
-              <div style={{ height: "100%", width: clamp((numVal / 1023) * 100, 0, 100) + "%", background: "linear-gradient(90deg, var(--bp-blue), var(--bp-energized))" }} />
-            </div>
-          </div>
-        )}
-        {widget.type === "NUMBER" && (
-          <div style={{ textAlign: "center" }}>
-            <div className="plcs-mono" style={{ fontSize: 28, color: "var(--bp-amber)" }}>{Math.round(numVal)}</div>
-            <div className="plcs-mono" style={{ fontSize: 11, color: "var(--bp-text-dim)" }}>{widget.address || "..."}</div>
-          </div>
-        )}
-        {widget.type === "CHART" && (
-          <div style={{ width: "100%", height: 100 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={history || []}>
-                <CartesianGrid stroke="var(--bp-line)" strokeDasharray="3 3" />
-                <XAxis dataKey="t" hide />
-                <YAxis width={30} tick={{ fontSize: 9, fill: "var(--bp-text-dim)" }} />
-                <Tooltip contentStyle={{ background: "var(--bp-panel)", border: "1px solid var(--bp-line)", fontSize: 11 }} />
-                <Line type="monotone" dataKey="v" stroke="var(--bp-blue)" dot={false} strokeWidth={2} isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-        <select className="plcs-select" style={{ fontSize: 11 }} value={widget.type} onChange={(e) => onUpdate({ type: e.target.value })}>
-          {HMI_TYPES.map((t) => <option key={t.type} value={t.type}>{t.label}</option>)}
-        </select>
-        <input className="plcs-input" style={{ fontSize: 11 }} value={widget.address} placeholder="Adresse" onChange={(e) => onUpdate({ address: e.target.value })} />
-      </div>
-    </div>
-  );
-}
-function HmiTab({ project, setProject, sim, writeBool, history }) {
-  const widgets = project.hmi.widgets;
-  const addWidget = () => setProject((p) => ({ ...p, hmi: { widgets: [...p.hmi.widgets, { id: uid(), type: "LIGHT", label: "Nouveau widget", address: "Q0.0" }] } }));
-  const updateWidget = (id, patch) => setProject((p) => ({ ...p, hmi: { widgets: p.hmi.widgets.map((w) => w.id === id ? { ...w, ...patch } : w) } }));
-  const removeWidget = (id) => setProject((p) => ({ ...p, hmi: { widgets: p.hmi.widgets.filter((w) => w.id !== id) } }));
-
-  return (
-    <div className="plcs-scroll" style={{ height: "100%", overflowY: "auto", padding: 20 }}>
-      {!sim.running && (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", background: "var(--bp-panel-raised)", border: "1px solid var(--bp-line)", borderRadius: 6, padding: "8px 12px", marginBottom: 16, fontSize: 12.5, color: "var(--bp-text-dim)" }}>
-          <Info size={14} /> Lancez la simulation depuis l'onglet Ladder pour voir cette page se mettre a jour en temps reel.
-        </div>
-      )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 14 }}>
-        {widgets.map((w) => (
-          <HmiWidgetCard key={w.id} widget={w} sim={sim} writeBool={writeBool} onUpdate={(p) => updateWidget(w.id, p)} onRemove={() => removeWidget(w.id)} history={history[w.address]} />
-        ))}
-        <button onClick={addWidget} style={{ border: "1px dashed var(--bp-line-strong)", borderRadius: 8, background: "transparent", color: "var(--bp-text-dim)", cursor: "pointer", minHeight: 150, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
-          <Plus size={20} /> Ajouter un widget
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   Onglet Code (generation Arduino)
-   ============================================================ */
-function CodeTab({ project }) {
-  const code = useMemo(() => generateArduinoCode(project), [project]);
-  const download = () => {
-    const blob = new Blob([code], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `${project.name.replace(/\s+/g, "_") || "programme"}.ino`;
-    a.click(); URL.revokeObjectURL(url);
-  };
-  return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--bp-line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 12.5, color: "var(--bp-text-dim)" }}>
-          Code Arduino (.ino) genere depuis le programme Ladder actuel — a relire avant tout televersement.
-        </div>
-        <Btn variant="primary" onClick={download}><Download size={14} /> Telecharger .ino</Btn>
-      </div>
-      <pre className="plcs-scroll plcs-mono" style={{ flex: 1, margin: 0, padding: 18, overflow: "auto", fontSize: 12.5, lineHeight: 1.6, color: "var(--bp-text)", background: "var(--bp-canvas)" }}>
-        {code}
-      </pre>
-    </div>
-  );
-}
-
-/* ============================================================
-   Onglet Bibliotheque
-   ============================================================ */
-function LibraryTab({ onLoad }) {
-  return (
-    <div className="plcs-scroll" style={{ height: "100%", overflowY: "auto", padding: 20 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
-        {EXAMPLES.map((ex) => (
-          <div key={ex.id} style={{ background: "var(--bp-panel-raised)", border: "1px solid var(--bp-line)", borderRadius: 8, padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--bp-text)" }}>{ex.title}</div>
-            <div style={{ fontSize: 12.5, color: "var(--bp-text-dim)", lineHeight: 1.5, flex: 1 }}>{ex.desc}</div>
-            <div style={{ fontSize: 11, color: "var(--bp-text-dim)" }} className="plcs-mono">{ex.networks.length} reseau{ex.networks.length > 1 ? "x" : ""}</div>
-            <Btn variant="primary" onClick={() => onLoad(ex)}><FolderOpen size={14} /> Charger cet exemple</Btn>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   App principale
-   ============================================================ */
-const TABS = [
-  { id: "ladder", label: "Ladder", icon: LayoutGrid },
-  { id: "hmi", label: "HMI / SCADA", icon: MonitorSmartphone },
-  { id: "code", label: "Code Arduino", icon: Code2 },
-  { id: "library", label: "Bibliotheque", icon: FolderOpen },
-];
-const HISTORY_LEN = 40;
+const TABS = [{ id: "ladder", label: "LADDER" }, { id: "code", label: "CODE" }];
 
 export default function App() {
   const [project, setProject] = useState(createBlankProject);
@@ -1590,6 +1024,7 @@ export default function App() {
 
   const projectRef = useRef(project);
   useEffect(() => { projectRef.current = project; }, [project]);
+
   const simDataRef = useRef({ values: initValues(), prevScanValues: initValues(), prevNetPower: {} });
   const intervalRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -1599,6 +1034,7 @@ export default function App() {
     setBoolAddr(simDataRef.current.values, addr, val);
     setSim((s) => ({ ...s, values: clone(simDataRef.current.values) }));
   }, []);
+
   const writeNum = useCallback((addr, val) => {
     if (!addr) return;
     setNumAddr(simDataRef.current.values, addr, val);
@@ -1617,7 +1053,7 @@ export default function App() {
       setHistory((h) => {
         const next = { ...h };
         chartAddrs.forEach((addr) => {
-          const arr = (next[addr] || []).slice(-(HISTORY_LEN - 1));
+          const arr = (next[addr] || []).slice(-39);
           next[addr] = [...arr, { t: (arr[arr.length - 1]?.t || 0) + 1, v: getNum(newValues, addr) }];
         });
         return next;
@@ -1630,25 +1066,23 @@ export default function App() {
     setSim((s) => ({ ...s, running: true }));
     intervalRef.current = setInterval(runScan, SCAN_MS);
   };
+
   const onStop = () => {
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
     setSim((s) => ({ ...s, running: false }));
   };
+
   const onReset = () => {
     onStop();
     simDataRef.current = { values: initValues(), prevScanValues: initValues(), prevNetPower: {} };
     setSim({ running: false, values: initValues(), visual: {} });
     setHistory({});
   };
+
   useEffect(() => () => { if (intervalRef.current) clearInterval(intervalRef.current); }, []);
 
-  const loadProject = (p) => {
-    onReset();
-    setProject(p);
-    setSelection(null);
-    setTool(null);
-  };
-  const loadExample = (ex) => { loadProject(buildExampleProject(ex)); setTab("ladder"); };
+  const loadProject = (p) => { onReset(); setProject(p); setSelection(null); setTool(null); };
+  const loadExample = (ex) => { loadProject(buildExampleProject(ex)); };
 
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
@@ -1657,6 +1091,7 @@ export default function App() {
     a.href = url; a.download = `${project.name.replace(/\s+/g, "_") || "projet"}.json`;
     a.click(); URL.revokeObjectURL(url);
   };
+
   const importJson = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1666,27 +1101,26 @@ export default function App() {
         const parsed = JSON.parse(reader.result);
         if (!parsed.networks || !parsed.ioMap) throw new Error("format invalide");
         loadProject(parsed);
-      } catch (err) {
-        alert("Fichier projet invalide : " + err.message);
-      }
+      } catch (err) { alert("Fichier invalide : " + err.message); }
     };
     reader.readAsText(file);
     e.target.value = "";
   };
 
+  const code = useMemo(() => generateArduinoCode(project), [project]);
+  const downloadCode = () => {
+    const blob = new Blob([code], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${project.name.replace(/\s+/g, "_") || "programme"}.ino`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="plcs-root" style={{ width: "100%", height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <GlobalStyle />
-      {/* Top bar */}
-      <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 14, padding: "10px 20px", background: "linear-gradient(180deg,#3a4149,#232830)", borderBottom: "2px solid #111417", boxShadow: "0 2px 6px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.06)", flexWrap: "wrap" }}>
-        <span className="plcs-rivet" style={{ top: 6, left: 6 }} />
-        <span className="plcs-rivet" style={{ top: 6, right: 6 }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <span style={{ width: 30, height: 30, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(180deg,#454d56,#2a2f35)", border: "1px solid #111417", boxShadow: "inset 0 1px 0 rgba(255,255,255,.1)" }}>
-            <Cpu size={17} color="var(--bp-amber)" />
-          </span>
-          <span style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 600, fontSize: 17, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--bp-text)" }}>IoT PLC Studio</span>
-        </div>
+      {/* Barre supérieure */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 20px", background: "linear-gradient(180deg,#3a4149,#232830)", borderBottom: "2px solid #111417", flexWrap: "wrap" }}>
+        <span style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 600, fontSize: 17, textTransform: "uppercase", color: "var(--bp-text)" }}>IoT PLC Studio</span>
         <input className="plcs-input" style={{ background: "transparent", border: "1px solid transparent", fontFamily: "IBM Plex Sans", minWidth: 140 }}
           value={project.name} onChange={(e) => setProject((p) => ({ ...p, name: e.target.value }))} />
         <select className="plcs-select" value={project.board} onChange={(e) => setProject((p) => ({ ...p, board: e.target.value }))}>
@@ -1694,41 +1128,46 @@ export default function App() {
         </select>
         <div style={{ flex: 1 }} />
         <nav style={{ display: "flex", gap: 2 }}>
-          {TABS.map((t) => {
-            const Icon = t.icon;
-            return (
-              <div key={t.id} className={`plcs-tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
-                <Icon size={15} /> {t.label}
-              </div>
-            );
-          })}
+          {TABS.map((t) => (
+            <div key={t.id} className={`plcs-tab ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>{t.label}</div>
+          ))}
         </nav>
         <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <input ref={fileInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={importJson} />
-          <Btn onClick={() => fileInputRef.current.click()} title="Importer un projet JSON"><Upload size={14} /></Btn>
-          <Btn onClick={exportJson} title="Exporter le projet en JSON"><Save size={14} /></Btn>
+          <Btn onClick={() => fileInputRef.current.click()}>↥ Importer</Btn>
+          <Btn onClick={exportJson}>💾 Exporter</Btn>
+          <div style={{ borderLeft: "1px solid var(--bp-line)", marginLeft: 4, paddingLeft: 8, display: "flex", gap: 4 }}>
+            {EXAMPLES.map((ex) => <Btn key={ex.id} onClick={() => loadExample(ex)} style={{ fontSize: 10, padding: "4px 8px" }}>{ex.title}</Btn>)}
+          </div>
         </div>
       </div>
 
-      {/* Content */}
+      {/* Contenu principal */}
       <div style={{ flex: 1, minHeight: 0 }}>
-        {tab === "ladder" && (
-          <LadderTab project={project} setProject={setProject} tool={tool} setTool={setTool}
+        {tab === "ladder" ? (
+          <LadderAllInOne project={project} setProject={setProject} tool={tool} setTool={setTool}
             sim={sim} selection={selection} setSelection={setSelection}
             writeBool={writeBool} writeNum={writeNum} onRun={onRun} onStop={onStop} onReset={onReset} />
+        ) : (
+          <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--bp-line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 12.5, color: "var(--bp-text-dim)" }}>Code Arduino généré — À relire avant déploiement</span>
+              <Btn variant="primary" onClick={downloadCode}>⬇ Télécharger .ino</Btn>
+            </div>
+            <pre className="plcs-scroll plcs-mono" style={{ flex: 1, margin: 0, padding: 18, overflow: "auto", fontSize: 12.5, lineHeight: 1.6, color: "var(--bp-text)", background: "var(--bp-canvas)" }}>
+              {code}
+            </pre>
+          </div>
         )}
-        {tab === "hmi" && <HmiTab project={project} setProject={setProject} sim={sim} writeBool={writeBool} history={history} />}
-        {tab === "code" && <CodeTab project={project} />}
-        {tab === "library" && <LibraryTab onLoad={loadExample} />}
       </div>
 
-      {/* Status bar */}
-      <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 16px", background: "linear-gradient(180deg,#232830,#181c21)", borderTop: "2px solid #111417", boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)", fontSize: 11, color: "var(--bp-text-dim)" }} className="plcs-mono">
-        <span>{project.networks.length} reseau(x) · {project.ioMap.length} adresse(s) E/S</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 600, letterSpacing: ".04em", color: sim.running ? "var(--bp-energized)" : "var(--bp-text-dim)" }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: sim.running ? "var(--bp-energized)" : "var(--bp-line-strong)", boxShadow: sim.running ? "0 0 6px var(--bp-energized)" : "inset 0 1px 2px rgba(0,0,0,.6)", animation: sim.running ? "plcs-blink 1.4s infinite" : "none" }} />
-          {sim.running ? "AUTOMATE EN MARCHE (simulation)" : "ARRETE"}
+      {/* Barre d'état */}
+      <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 16px", background: "linear-gradient(180deg,#232830,#181c21)", borderTop: "2px solid #111417", fontSize: 11, color: "var(--bp-text-dim)" }} className="plcs-mono">
+        <span>{project.networks.length} réseau(x) · {project.ioMap.length} E/S</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 7, color: sim.running ? "var(--bp-energized)" : "var(--bp-text-dim)" }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: sim.running ? "var(--bp-energized)" : "var(--bp-line-strong)", animation: sim.running ? "plcs-blink 1.4s infinite" : "none" }} />
+          {sim.running ? "EN MARCHE" : "ARRÊTÉ"}
         </span>
       </div>
     </div>
