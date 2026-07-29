@@ -510,20 +510,24 @@ function buildExampleProject(ex) {
    ============================================================ */
 const GlobalStyle = () => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Oswald:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
     .plcs-root {
-      --bp-canvas:#0a1626; --bp-panel:#0e2036; --bp-panel-raised:#153252;
-      --bp-line:#2f5074; --bp-line-strong:#4d7aa8; --bp-rail:#7fa8cf;
-      --bp-text:#dce8f2; --bp-text-dim:#7191b1; --bp-amber:#f0a83c;
-      --bp-energized:#3ddc84; --bp-energized-fill:rgba(61,220,132,0.18);
-      --bp-alarm:#ef4a5f; --bp-blue:#4fb3ff;
-      font-family:'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
-      background:var(--bp-canvas); color:var(--bp-text);
+      --bp-canvas:#181d22; --bp-panel:#2b3138; --bp-panel-raised:#3a4149;
+      --bp-line:#565f68; --bp-line-strong:#7a8590; --bp-rail:#9aa5af;
+      --bp-text:#e7ebee; --bp-text-dim:#9aa4ad; --bp-amber:#ffb020;
+      --bp-energized:#4ee06a; --bp-energized-fill:rgba(78,224,106,0.18);
+      --bp-alarm:#ff4433; --bp-blue:#3fc1ff;
+      --bp-bevel-hi:rgba(255,255,255,0.16); --bp-bevel-lo:rgba(0,0,0,0.55);
+      font-family:'IBM Plex Sans', 'Segoe UI', Tahoma, ui-sans-serif, system-ui, sans-serif;
+      background:
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 1px, transparent 1px, transparent 3px),
+        var(--bp-canvas);
+      color:var(--bp-text);
     }
     .plcs-mono { font-family:'IBM Plex Mono', ui-monospace, monospace; }
-    .plcs-scroll::-webkit-scrollbar{ width:8px; height:8px; }
-    .plcs-scroll::-webkit-scrollbar-thumb{ background:var(--bp-line); border-radius:4px; }
-    .plcs-scroll::-webkit-scrollbar-track{ background:transparent; }
+    .plcs-scroll::-webkit-scrollbar{ width:10px; height:10px; }
+    .plcs-scroll::-webkit-scrollbar-thumb{ background:var(--bp-line-strong); border-radius:2px; border:1px solid var(--bp-canvas); }
+    .plcs-scroll::-webkit-scrollbar-track{ background:var(--bp-panel); }
     .ladder-label{ fill:var(--bp-amber); font-family:'IBM Plex Mono',monospace; font-size:11px; }
     .ladder-label-dim{ fill:var(--bp-text-dim); font-family:'IBM Plex Mono',monospace; font-size:11px; }
     .ladder-glyph-tag{ fill:var(--bp-text); font-size:12px; font-weight:600; font-family:'IBM Plex Mono',monospace;}
@@ -531,28 +535,48 @@ const GlobalStyle = () => (
     .ladder-glyph-tiny{ fill:var(--bp-blue); font-size:9px; font-family:'IBM Plex Mono',monospace;}
     .plcs-blueprint-grid{
       background-image: linear-gradient(var(--bp-line) 1px, transparent 1px), linear-gradient(90deg, var(--bp-line) 1px, transparent 1px);
-      background-size: 26px 26px; background-position: -1px -1px; opacity:1;
+      background-size: 26px 26px; background-position: -1px -1px; opacity:.5;
     }
-    .plcs-btn { display:flex; align-items:center; gap:6px; padding:6px 10px; border-radius:4px; border:1px solid var(--bp-line); background:var(--bp-panel-raised); color:var(--bp-text); font-size:12.5px; cursor:pointer; transition:background .12s,border-color .12s; white-space:nowrap; }
-    .plcs-btn:hover { border-color:var(--bp-rail); background:#1c3c5e; }
-    .plcs-btn.active { border-color:var(--bp-amber); background:#3a2a10; color:var(--bp-amber); }
+    /* --- Boutons style panneau de commande industriel (relief 3D, embouti) --- */
+    .plcs-btn {
+      display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:3px;
+      border-top:1px solid var(--bp-bevel-hi); border-left:1px solid var(--bp-bevel-hi);
+      border-bottom:1px solid var(--bp-bevel-lo); border-right:1px solid var(--bp-bevel-lo);
+      background:linear-gradient(180deg,#454d56,#33383e);
+      color:var(--bp-text); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.03em;
+      cursor:pointer; transition:transform .05s, box-shadow .12s; white-space:nowrap;
+      box-shadow:0 1px 0 rgba(0,0,0,.4);
+    }
+    .plcs-btn:hover { background:linear-gradient(180deg,#4f5761,#3a4149); }
+    .plcs-btn:active { transform:translateY(1px); box-shadow:inset 0 1px 3px rgba(0,0,0,.6); border-top-color:var(--bp-bevel-lo); border-left-color:var(--bp-bevel-lo); }
+    .plcs-btn.active { border-color:var(--bp-amber); background:linear-gradient(180deg,#5a4315,#3a2a10); color:var(--bp-amber); box-shadow:inset 0 1px 4px rgba(0,0,0,.5); }
     .plcs-btn:disabled { opacity:.4; cursor:not-allowed; }
-    .plcs-btn.primary { background:var(--bp-energized); color:#03210f; border-color:var(--bp-energized); font-weight:600; }
-    .plcs-btn.primary:hover { background:#54e79a; }
-    .plcs-btn.danger { border-color:var(--bp-alarm); color:var(--bp-alarm); background:transparent; }
+    .plcs-btn.primary { background:linear-gradient(180deg,#5df07e,#2fb955); color:#04270f; border-color:#2c9c48; font-weight:700; }
+    .plcs-btn.primary:hover { background:linear-gradient(180deg,#6bf88c,#39c962); }
+    .plcs-btn.danger { border-color:var(--bp-alarm); color:#ffdbd6; background:linear-gradient(180deg,#8a2a22,#5c1712); }
+    .plcs-btn.danger:hover { background:linear-gradient(180deg,#a3352b,#6e1c16); }
     .plcs-input, .plcs-select {
-      background:var(--bp-canvas); border:1px solid var(--bp-line); color:var(--bp-text);
-      border-radius:4px; padding:5px 7px; font-size:12.5px; font-family:'IBM Plex Mono',monospace;
+      background:var(--bp-canvas); color:var(--bp-text);
+      border-top:1px solid var(--bp-bevel-lo); border-left:1px solid var(--bp-bevel-lo);
+      border-bottom:1px solid var(--bp-bevel-hi); border-right:1px solid var(--bp-bevel-hi);
+      border-radius:2px; padding:5px 7px; font-size:12.5px; font-family:'IBM Plex Mono',monospace;
+      box-shadow:inset 0 1px 3px rgba(0,0,0,.5);
     }
-    .plcs-input:focus, .plcs-select:focus { outline:none; border-color:var(--bp-amber); }
-    .plcs-tab { padding:9px 14px; font-size:13px; border-bottom:2px solid transparent; color:var(--bp-text-dim); cursor:pointer; display:flex; align-items:center; gap:6px; }
-    .plcs-tab.active { color:var(--bp-text); border-bottom-color:var(--bp-amber); }
-    .plcs-tab:hover:not(.active) { color:var(--bp-text); }
-    .plcs-panel-title { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--bp-text-dim); font-weight:600; margin-bottom:8px; }
-    .plcs-switch { width:38px; height:20px; border-radius:10px; background:var(--bp-line); position:relative; cursor:pointer; transition:background .15s; flex-shrink:0; }
-    .plcs-switch.on { background:var(--bp-energized); }
-    .plcs-switch::after { content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#0a1626; transition:left .15s; }
-    .plcs-switch.on::after { left:20px; }
+    .plcs-input:focus, .plcs-select:focus { outline:none; border-color:var(--bp-amber); box-shadow:inset 0 1px 3px rgba(0,0,0,.5), 0 0 0 1px var(--bp-amber); }
+    /* --- Onglets type selecteur rotatif de pupitre --- */
+    .plcs-tab {
+      padding:9px 16px; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
+      color:var(--bp-text-dim); cursor:pointer; display:flex; align-items:center; gap:6px;
+      border:1px solid var(--bp-line); border-bottom:none; border-radius:3px 3px 0 0;
+      background:var(--bp-panel); margin-right:2px; transition:background .12s,color .12s;
+    }
+    .plcs-tab.active { color:#181d22; background:var(--bp-amber); border-color:var(--bp-amber); }
+    .plcs-tab:hover:not(.active) { color:var(--bp-text); background:var(--bp-panel-raised); }
+    .plcs-panel-title { font-size:11px; text-transform:uppercase; letter-spacing:.09em; color:var(--bp-text-dim); font-weight:700; margin-bottom:8px; font-family:'Oswald',sans-serif; }
+    .plcs-switch { width:40px; height:22px; border-radius:3px; background:var(--bp-canvas); position:relative; cursor:pointer; transition:background .15s; flex-shrink:0; box-shadow:inset 0 1px 4px rgba(0,0,0,.6); border:1px solid var(--bp-line); }
+    .plcs-switch.on { background:#1b3a22; }
+    .plcs-switch::after { content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:2px; background:linear-gradient(180deg,#7a838c,#454d56); transition:left .15s; box-shadow:0 1px 2px rgba(0,0,0,.5); }
+    .plcs-switch.on::after { left:22px; background:linear-gradient(180deg,#6bf88c,#2fb955); }
     @keyframes plcs-blink { 0%,100%{opacity:1} 50%{opacity:.35} }
     .plcs-resize-handle { width:9px; flex-shrink:0; cursor:col-resize; background:var(--bp-panel); display:flex; align-items:center; justify-content:center; position:relative; }
     .plcs-resize-handle::before { content:''; position:absolute; top:0; bottom:0; left:4px; width:1px; background:var(--bp-line); }
@@ -562,6 +586,8 @@ const GlobalStyle = () => (
     .plcs-vresize-handle { height:9px; flex-shrink:0; cursor:row-resize; background:var(--bp-panel); display:flex; align-items:center; justify-content:center; border-top:1px solid var(--bp-line); }
     .plcs-vresize-grip { width:34px; height:3px; border-radius:2px; background:var(--bp-line-strong); transition:background .12s; }
     .plcs-vresize-handle:hover .plcs-vresize-grip { background:var(--bp-amber); }
+    /* --- Rivets/vis d'angle façon armoire electrique, pour les panneaux marquants --- */
+    .plcs-rivet { position:absolute; width:6px; height:6px; border-radius:50%; background:radial-gradient(circle at 35% 35%, #9aa5af, #23282d); box-shadow:0 1px 1px rgba(0,0,0,.6); }
   `}</style>
 );
 
@@ -1652,10 +1678,14 @@ export default function App() {
     <div className="plcs-root" style={{ width: "100%", height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <GlobalStyle />
       {/* Top bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 16px", background: "var(--bp-panel)", borderBottom: "1px solid var(--bp-line)", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Cpu size={20} color="var(--bp-amber)" />
-          <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: ".01em" }}>IoT PLC Studio</span>
+      <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 14, padding: "10px 20px", background: "linear-gradient(180deg,#3a4149,#232830)", borderBottom: "2px solid #111417", boxShadow: "0 2px 6px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.06)", flexWrap: "wrap" }}>
+        <span className="plcs-rivet" style={{ top: 6, left: 6 }} />
+        <span className="plcs-rivet" style={{ top: 6, right: 6 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <span style={{ width: 30, height: 30, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(180deg,#454d56,#2a2f35)", border: "1px solid #111417", boxShadow: "inset 0 1px 0 rgba(255,255,255,.1)" }}>
+            <Cpu size={17} color="var(--bp-amber)" />
+          </span>
+          <span style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 600, fontSize: 17, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--bp-text)" }}>IoT PLC Studio</span>
         </div>
         <input className="plcs-input" style={{ background: "transparent", border: "1px solid transparent", fontFamily: "IBM Plex Sans", minWidth: 140 }}
           value={project.name} onChange={(e) => setProject((p) => ({ ...p, name: e.target.value }))} />
@@ -1694,10 +1724,10 @@ export default function App() {
       </div>
 
       {/* Status bar */}
-      <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 16px", background: "var(--bp-panel)", borderTop: "1px solid var(--bp-line)", fontSize: 11, color: "var(--bp-text-dim)" }} className="plcs-mono">
+      <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 16px", background: "linear-gradient(180deg,#232830,#181c21)", borderTop: "2px solid #111417", boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)", fontSize: 11, color: "var(--bp-text-dim)" }} className="plcs-mono">
         <span>{project.networks.length} reseau(x) · {project.ioMap.length} adresse(s) E/S</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: sim.running ? "var(--bp-energized)" : "var(--bp-line-strong)", animation: sim.running ? "plcs-blink 1.4s infinite" : "none" }} />
+        <span style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 600, letterSpacing: ".04em", color: sim.running ? "var(--bp-energized)" : "var(--bp-text-dim)" }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: sim.running ? "var(--bp-energized)" : "var(--bp-line-strong)", boxShadow: sim.running ? "0 0 6px var(--bp-energized)" : "inset 0 1px 2px rgba(0,0,0,.6)", animation: sim.running ? "plcs-blink 1.4s infinite" : "none" }} />
           {sim.running ? "AUTOMATE EN MARCHE (simulation)" : "ARRETE"}
         </span>
       </div>
