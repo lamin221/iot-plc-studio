@@ -1193,8 +1193,8 @@ function WatchPanel({ project, sim, writeBool, writeNum, onRun, onStop, onReset 
    ============================================================ */
 function NetworkToolbar({ net, onAddRow, onRemoveRow, onAddCol, onRemoveCol, onDelete, onComment }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: "var(--bp-panel)", borderBottom: "1px solid var(--bp-line)" }}>
-      <input className="plcs-input" style={{ flex: 1, background: "transparent", border: "none", color: "var(--bp-amber)", fontFamily: "IBM Plex Sans" }}
+    <div style={{ display: "flex", alignItems: "center", gap: 6, paddingBottom: 6 }}>
+      <input className="plcs-input" style={{ flex: 1, background: "transparent", border: "none", borderBottom: "1px dashed var(--bp-line)", borderRadius: 0, boxShadow: "none", color: "var(--bp-amber)", fontFamily: "IBM Plex Sans", padding: "3px 2px" }}
         value={net.comment} placeholder="Commentaire du reseau..." onChange={(e) => onComment(e.target.value)} />
       <Btn onClick={onAddRow} title="Ajouter une branche (OU)"><Plus size={12} />branche</Btn>
       <Btn onClick={onRemoveRow} disabled={net.rows.length <= 1} title="Retirer une branche"><Minus size={12} />branche</Btn>
@@ -1292,19 +1292,20 @@ function useResizeHeight(min, max) {
   const resetHeight = useCallback(() => setHeight(null), []);
   return [height, onMouseDown, resetHeight, contentRef];
 }
-// Une carte-reseau avec une poignee de redimensionnement en bas : par defaut la hauteur
-// s'adapte au contenu, mais l'utilisateur peut la fixer manuellement (defilement interne au besoin).
-function NetworkCard({ net, sim, onCellClick, onOutputClick, onAddRow, onRemoveRow, onAddCol, onRemoveCol, onDelete, onComment }) {
-  const [height, onDrag, resetHeight, contentRef] = useResizeHeight(70, 900);
+// Un "rung" (reseau) au sein d'une feuille de schema continue : pas de boite ni de
+// defilement propre, juste un numero de reseau en marge et un separateur fin entre reseaux,
+// pour retrouver la continuite visuelle d'un vrai logiciel Ladder (rails alignes verticalement).
+function NetworkCard({ index, net, sim, onCellClick, onOutputClick, onAddRow, onRemoveRow, onAddCol, onRemoveCol, onDelete, onComment }) {
   return (
-    <div style={{ background: "rgba(14,32,54,0.85)", border: "1px solid var(--bp-line)", borderRadius: 6, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-      <NetworkToolbar net={net} onAddRow={onAddRow} onRemoveRow={onRemoveRow} onAddCol={onAddCol} onRemoveCol={onRemoveCol} onDelete={onDelete} onComment={onComment} />
-      <div ref={contentRef} className="plcs-scroll" style={{ overflow: "auto", padding: "6px 4px", height: height != null ? height : undefined }}>
-        <NetworkView net={net} sim={sim} onCellClick={onCellClick} onOutputClick={onOutputClick} />
+    <div style={{ display: "flex", borderTop: index === 0 ? "none" : "1px solid var(--bp-line)", paddingTop: index === 0 ? 4 : 14, marginTop: index === 0 ? 0 : 14 }}>
+      <div style={{ width: 40, flexShrink: 0, display: "flex", justifyContent: "center", paddingTop: 6 }}>
+        <span className="plcs-mono" style={{ fontSize: 11, fontWeight: 700, color: "var(--bp-text-dim)" }}>R{index + 1}</span>
       </div>
-      <div className="plcs-vresize-handle" onMouseDown={onDrag} onDoubleClick={resetHeight}
-        title={height != null ? `Hauteur : ${height}px — double-clic pour revenir a l'automatique` : "Glisser pour fixer la hauteur de ce reseau"}>
-        <div className="plcs-vresize-grip" />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <NetworkToolbar net={net} onAddRow={onAddRow} onRemoveRow={onRemoveRow} onAddCol={onAddCol} onRemoveCol={onRemoveCol} onDelete={onDelete} onComment={onComment} />
+        <div style={{ padding: "6px 4px 2px" }}>
+          <NetworkView net={net} sim={sim} onCellClick={onCellClick} onOutputClick={onOutputClick} />
+        </div>
       </div>
     </div>
   );
@@ -1388,16 +1389,18 @@ function LadderTab({ project, setProject, tool, setTool, sim, selection, setSele
         <Palette tool={tool} setTool={setTool} ioMap={project.ioMap} setIoMap={setIoMap} />
       </div>
       <ResizeHandle onMouseDown={leftDrag} onDoubleClick={resetLeft} title="Redimensionner la palette (double-clic pour reinitialiser)" />
-      <div className="plcs-scroll plcs-blueprint-grid" style={{ flex: 1, minWidth: 0, overflow: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
-        {project.networks.map((net) => (
-          <NetworkCard key={net.id} net={net} sim={sim}
-            onCellClick={placeOrSelectCell} onOutputClick={placeOrSelectOutput}
-            onAddRow={() => addRow(net.id)} onRemoveRow={() => removeRow(net.id)}
-            onAddCol={() => addCol(net.id)} onRemoveCol={() => removeCol(net.id)}
-            onDelete={() => deleteNetwork(net.id)} onComment={(t) => setComment(net.id, t)}
-          />
-        ))}
-        <Btn onClick={addNetwork} className="plcs-mono" style={{ alignSelf: "flex-start" }}><Plus size={14} /> Ajouter un reseau</Btn>
+      <div className="plcs-scroll plcs-blueprint-grid" style={{ flex: 1, minWidth: 0, overflow: "auto", padding: "20px 20px 24px" }}>
+        <div style={{ background: "rgba(14,32,54,0.55)", border: "1px solid var(--bp-line)", borderRadius: 6, padding: "10px 14px 16px" }}>
+          {project.networks.map((net, i) => (
+            <NetworkCard key={net.id} index={i} net={net} sim={sim}
+              onCellClick={placeOrSelectCell} onOutputClick={placeOrSelectOutput}
+              onAddRow={() => addRow(net.id)} onRemoveRow={() => removeRow(net.id)}
+              onAddCol={() => addCol(net.id)} onRemoveCol={() => removeCol(net.id)}
+              onDelete={() => deleteNetwork(net.id)} onComment={(t) => setComment(net.id, t)}
+            />
+          ))}
+        </div>
+        <Btn onClick={addNetwork} className="plcs-mono" style={{ marginTop: 14 }}><Plus size={14} /> Ajouter un reseau</Btn>
       </div>
       <ResizeHandle onMouseDown={rightDrag} onDoubleClick={resetRight} title="Redimensionner le panneau (double-clic pour reinitialiser)" />
       <div style={{ width: rightW, flexShrink: 0, background: "var(--bp-panel)", display: "flex", flexDirection: "column" }}>
