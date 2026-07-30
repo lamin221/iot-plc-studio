@@ -4,6 +4,7 @@ import {
   LayoutGrid, Gauge as GaugeIcon, ToggleLeft, FolderOpen, Code2,
   MonitorSmartphone, X, Zap, RotateCcw, Eraser, Save, ChevronDown,
   Lightbulb, LineChart as LineChartIcon, SlidersHorizontal, Info,
+  Undo2, Redo2, AlertTriangle,
 } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -403,6 +404,53 @@ function generateArduinoCode(project) {
 }
 
 /* ---------- Bibliotheque de projets d'exemple ---------- */
+// Analyse statique d'un projet : releve deux classes de defauts frequents en Ladder
+// - "coil-conflict" : la meme adresse est ecrite par une bobine (COIL) dans plusieurs
+//   reseaux (double affectation, comportement indetermine selon l'ordre de scan).
+// - "bad-address"   : un contact / une sortie physique (I/Q/AI/AQ) reference une
+//   adresse absente de la table d'E/S (project.ioMap), donc non cablee sur une broche.
+function computeDiagnostics(project) {
+  const warnings = [];
+  const ioAddrs = new Set((project.ioMap || []).map((i) => i.addr));
+  const isPhysicalGroup = (g) => g === "I" || g === "Q" || g === "AI" || g === "AQ";
+  const collectCellAddrs = (cell, out) => {
+    if (!cell) return;
+    if (cell.kind === "GROUP") {
+      (cell.branches || []).forEach((b) => b.forEach((c) => collectCellAddrs(c, out)));
+      return;
+    }
+    if (["NO", "NC", "P", "N", "CMP"].includes(cell.kind) && cell.address) out.push(cell.address);
+    if (cell.kind === "CMP" && cell.address2) out.push(cell.address2);
+  };
+  const coilWriters = new Map();
+  project.networks.forEach((net, ni) => {
+    net.rows.forEach((row) => row.cells.forEach((c) => {
+      const addrs = [];
+      collectCellAddrs(c, addrs);
+      addrs.forEach((addr) => {
+        if (isPhysicalGroup(parseAddress(addr).group) && !ioAddrs.has(addr)) {
+          warnings.push({ type: "bad-address", key: `${net.id}-${addr}-${row.id}`, message: `Reseau R${ni + 1} : le contact ${addr} n'existe pas dans la table d'E/S.` });
+        }
+      });
+    }));
+    const out = net.output;
+    if (out.address && ["COIL", "SET", "RESET"].includes(out.kind)) {
+      if (isPhysicalGroup(parseAddress(out.address).group) && !ioAddrs.has(out.address)) {
+        warnings.push({ type: "bad-address", key: `${net.id}-out`, message: `Reseau R${ni + 1} : la sortie ${out.address} n'existe pas dans la table d'E/S.` });
+      }
+    }
+    if (out.kind === "COIL" && out.address) {
+      if (!coilWriters.has(out.address)) coilWriters.set(out.address, []);
+      coilWriters.get(out.address).push(ni + 1);
+    }
+  });
+  coilWriters.forEach((nets, addr) => {
+    if (nets.length > 1) {
+      warnings.push({ type: "coil-conflict", key: `coil-${addr}`, message: `Bobine ${addr} affectee (COIL) dans plusieurs reseaux : R${nets.join(", R")} — double affectation.` });
+    }
+  });
+  return warnings;
+}
 function net(cols, rowsCells, output, comment) {
   return {
     id: uid(), cols, comment,
@@ -494,6 +542,33 @@ const EXAMPLES = [
         [grp([[{ kind: "NO", address: "I0.0" }], [{ kind: "NO", address: "M0" }]]), { kind: "NC", address: "I0.1" }],
       ], { kind: "COIL", address: "M0" }, "Flotteur bas I0.0 declenche, flotteur haut I0.1 arrete"),
       net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "Commande pompe"),
+    ],
+  },
+  {
+    id: "two-way", title: "Va-et-vient (2 points de commande)", desc: "Bascule un eclairage depuis deux boutons independants, comme un va-et-vient cable.",
+    ioMap: [
+      { addr: "I0.0", pin: "D2", kind: "DI" }, { addr: "I0.1", pin: "D3", kind: "DI" },
+      { addr: "Q0.0", pin: "D8", kind: "DO" },
+    ],
+    networks: [
+      net(2, [
+        [grp([[{ kind: "P", address: "I0.0" }], [{ kind: "P", address: "I0.1" }]]), { kind: "NC", address: "M0" }],
+      ], { kind: "SET", address: "M0" }, "Front montant sur l'un des deux boutons, alors que M0 est au repos -> allumer"),
+      net(2, [
+        [grp([[{ kind: "P", address: "I0.0" }], [{ kind: "P", address: "I0.1" }]]), { kind: "NO", address: "M0" }],
+      ], { kind: "RESET", address: "M0" }, "Front montant sur l'un des deux boutons, alors que M0 est actif -> eteindre"),
+      net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "Etat de l'eclairage"),
+    ],
+  },
+  {
+    id: "part-count", title: "Comptage de pieces (CTU)", desc: "Compte les pieces sur un capteur, active une sortie lot complet au seuil, reset manuel.",
+    ioMap: [
+      { addr: "I0.0", pin: "D2", kind: "DI" }, { addr: "I0.1", pin: "D3", kind: "DI" },
+      { addr: "Q0.0", pin: "D8", kind: "DO" },
+    ],
+    networks: [
+      net(1, [[{ kind: "NO", address: "I0.0" }]], { kind: "CTU", address: "C0", preset: 10, resetAddress: "I0.1" }, "Capteur de passage I0.0 incremente C0 (seuil 10), reset par I0.1"),
+      net(1, [[{ kind: "NO", address: "C0" }]], { kind: "COIL", address: "Q0.0" }, "Lot complet : voyant / signal quand C0 atteint le seuil"),
     ],
   },
 ];
@@ -1387,6 +1462,7 @@ function LadderTab({ project, setProject, tool, setTool, sim, selection, setSele
   const removeCol = (id) => updateNetworks((nets) => nets.map((n) => n.id !== id || n.cols <= 1 ? n : { ...n, cols: n.cols - 1, rows: n.rows.map((r) => ({ ...r, cells: r.cells.slice(0, -1) })) }));
   const setComment = (id, text) => updateNetworks((nets) => nets.map((n) => n.id !== id ? n : { ...n, comment: text }));
   const setIoMap = (ioMap) => setProject((p) => ({ ...p, ioMap }));
+  const diagnostics = useMemo(() => computeDiagnostics(project), [project]);
 
   return (
     <div style={{ display: "flex", height: "100%", minWidth: 0, overflow: "hidden" }}>
@@ -1394,18 +1470,30 @@ function LadderTab({ project, setProject, tool, setTool, sim, selection, setSele
         <Palette tool={tool} setTool={setTool} ioMap={project.ioMap} setIoMap={setIoMap} />
       </div>
       <ResizeHandle onMouseDown={leftDrag} onDoubleClick={resetLeft} title="Redimensionner la palette (double-clic pour reinitialiser)" />
-      <div className="plcs-scroll plcs-blueprint-grid" style={{ flex: 1, minWidth: 0, overflow: "auto", padding: "20px 20px 24px" }}>
-        <div style={{ background: "rgba(14,32,54,0.55)", border: "1px solid var(--bp-line)", borderRadius: 6, padding: "10px 14px 16px" }}>
-          {project.networks.map((net, i) => (
-            <NetworkCard key={net.id} index={i} net={net} sim={sim}
-              onCellClick={placeOrSelectCell} onOutputClick={placeOrSelectOutput}
-              onAddRow={() => addRow(net.id)} onRemoveRow={() => removeRow(net.id)}
-              onAddCol={() => addCol(net.id)} onRemoveCol={() => removeCol(net.id)}
-              onDelete={() => deleteNetwork(net.id)} onComment={(t) => setComment(net.id, t)}
-            />
-          ))}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {diagnostics.length > 0 && (
+          <div className="plcs-mono plcs-scroll" style={{ maxHeight: 96, overflow: "auto", background: "rgba(90,40,20,0.5)", borderBottom: "2px solid var(--bp-alarm)", padding: "6px 14px" }}>
+            {diagnostics.map((w) => (
+              <div key={w.key} style={{ display: "flex", alignItems: "flex-start", gap: 7, fontSize: 11.5, color: "#ffd9d0", padding: "2px 0" }}>
+                <AlertTriangle size={13} color="var(--bp-alarm)" style={{ flexShrink: 0, marginTop: 1 }} />
+                {w.message}
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="plcs-scroll plcs-blueprint-grid" style={{ flex: 1, minWidth: 0, overflow: "auto", padding: "20px 20px 24px" }}>
+          <div style={{ background: "rgba(14,32,54,0.55)", border: "1px solid var(--bp-line)", borderRadius: 6, padding: "10px 14px 16px" }}>
+            {project.networks.map((net, i) => (
+              <NetworkCard key={net.id} index={i} net={net} sim={sim}
+                onCellClick={placeOrSelectCell} onOutputClick={placeOrSelectOutput}
+                onAddRow={() => addRow(net.id)} onRemoveRow={() => removeRow(net.id)}
+                onAddCol={() => addCol(net.id)} onRemoveCol={() => removeCol(net.id)}
+                onDelete={() => deleteNetwork(net.id)} onComment={(t) => setComment(net.id, t)}
+              />
+            ))}
+          </div>
+          <Btn onClick={addNetwork} className="plcs-mono" style={{ marginTop: 14 }}><Plus size={14} /> Ajouter un reseau</Btn>
         </div>
-        <Btn onClick={addNetwork} className="plcs-mono" style={{ marginTop: 14 }}><Plus size={14} /> Ajouter un reseau</Btn>
       </div>
       <ResizeHandle onMouseDown={rightDrag} onDoubleClick={resetRight} title="Redimensionner le panneau (double-clic pour reinitialiser)" />
       <div style={{ width: rightW, flexShrink: 0, background: "var(--bp-panel)", display: "flex", flexDirection: "column" }}>
@@ -1589,7 +1677,57 @@ const TABS = [
 const HISTORY_LEN = 40;
 
 export default function App() {
-  const [project, setProject] = useState(createBlankProject);
+  const [project, setProjectRaw] = useState(createBlankProject);
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
+  const skipHistory = useRef(false);
+  const [historyTick, setHistoryTick] = useState(0); // force re-render pour activer/desactiver les boutons
+
+  // setProject "normal" : empile l'etat precedent dans l'historique d'annulation et vide le refaire.
+  const setProject = useCallback((updater) => {
+    setProjectRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      if (!skipHistory.current) {
+        undoStack.current = [...undoStack.current.slice(-49), prev];
+        redoStack.current = [];
+        setHistoryTick((t) => t + 1);
+      }
+      return next;
+    });
+  }, []);
+  const undo = useCallback(() => {
+    if (undoStack.current.length === 0) return;
+    setProjectRaw((current) => {
+      const prevState = undoStack.current[undoStack.current.length - 1];
+      undoStack.current = undoStack.current.slice(0, -1);
+      redoStack.current = [...redoStack.current, current];
+      setHistoryTick((t) => t + 1);
+      return prevState;
+    });
+  }, []);
+  const redo = useCallback(() => {
+    if (redoStack.current.length === 0) return;
+    setProjectRaw((current) => {
+      const nextState = redoStack.current[redoStack.current.length - 1];
+      redoStack.current = redoStack.current.slice(0, -1);
+      undoStack.current = [...undoStack.current, current];
+      setHistoryTick((t) => t + 1);
+      return nextState;
+    });
+  }, []);
+  useEffect(() => {
+    const onKey = (e) => {
+      const meta = e.ctrlKey || e.metaKey;
+      if (!meta) return;
+      const tag = (document.activeElement && document.activeElement.tagName) || "";
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return; // ne pas gener la saisie de texte
+      if (e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if ((e.key.toLowerCase() === "z" && e.shiftKey) || e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
+
   const [tab, setTab] = useState("ladder");
   const [tool, setTool] = useState(null);
   const [selection, setSelection] = useState(null);
@@ -1652,7 +1790,10 @@ export default function App() {
 
   const loadProject = (p) => {
     onReset();
-    setProject(p);
+    undoStack.current = [];
+    redoStack.current = [];
+    setHistoryTick((t) => t + 1);
+    setProjectRaw(p);
     setSelection(null);
     setTool(null);
   };
@@ -1713,6 +1854,8 @@ export default function App() {
         </nav>
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", gap: 6 }}>
+          <Btn onClick={undo} disabled={undoStack.current.length === 0} title="Annuler (Ctrl+Z)"><Undo2 size={14} /></Btn>
+          <Btn onClick={redo} disabled={redoStack.current.length === 0} title="Retablir (Ctrl+Y)"><Redo2 size={14} /></Btn>
           <input ref={fileInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={importJson} />
           <Btn onClick={() => fileInputRef.current.click()} title="Importer un projet JSON"><Upload size={14} /></Btn>
           <Btn onClick={exportJson} title="Exporter le projet en JSON"><Save size={14} /></Btn>
