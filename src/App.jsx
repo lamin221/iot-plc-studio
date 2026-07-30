@@ -413,6 +413,15 @@ function net(cols, rowsCells, output, comment) {
     output: { kind: "NONE", address: "", preset: 1000, resetAddress: "", ...output },
   };
 }
+// Construit une cellule GROUP (branches paralleles imbriquees, en OU) prete a etre placee
+// dans une colonne de `net(...)`, pour factoriser un contact commun en serie au lieu de le
+// repeter sur chaque branche (ex: le contact d'arret d'un auto-maintien).
+function grp(branchDefs) {
+  return {
+    id: uid(), kind: "GROUP", address: "", address2: "", op: ">", value: "0",
+    branches: branchDefs.map((branch) => branch.map((c) => ({ id: uid(), address2: "", op: ">", value: "0", ...c }))),
+  };
+}
 const EXAMPLES = [
   {
     id: "motor", title: "Marche / Arret moteur", desc: "Circuit d'auto-maintien classique : appui Marche, arret par bouton NF.",
@@ -422,9 +431,8 @@ const EXAMPLES = [
     ],
     networks: [
       net(2, [
-        [{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }],
-        [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }],
-      ], { kind: "COIL", address: "M0" }, "Marche (I0.0) / Arret (I0.1) avec auto-maintien M0"),
+        [grp([[{ kind: "NO", address: "I0.0" }], [{ kind: "NO", address: "M0" }]]), { kind: "NC", address: "I0.1" }],
+      ], { kind: "COIL", address: "M0" }, "Marche (I0.0) OU auto-maintien (M0), en serie avec Arret (I0.1)"),
       net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "Commande du contacteur moteur"),
     ],
   },
@@ -436,9 +444,8 @@ const EXAMPLES = [
     ],
     networks: [
       net(2, [
-        [{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }],
-        [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }],
-      ], { kind: "COIL", address: "M0" }, "Marche (I0.0) / Arret (I0.1)"),
+        [grp([[{ kind: "NO", address: "I0.0" }], [{ kind: "NO", address: "M0" }]]), { kind: "NC", address: "I0.1" }],
+      ], { kind: "COIL", address: "M0" }, "Marche (I0.0) OU auto-maintien (M0), en serie avec Arret (I0.1)"),
       net(1, [[{ kind: "NO", address: "M0" }]], { kind: "TON", address: "T0", preset: 3000 }, "Temporisation etoile (3 s)"),
       net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "KM ligne"),
       net(2, [[{ kind: "NO", address: "M0" }, { kind: "NC", address: "T0" }]], { kind: "COIL", address: "Q0.1" }, "KM etoile (actif avant fin de T0)"),
@@ -471,9 +478,8 @@ const EXAMPLES = [
     ],
     networks: [
       net(3, [
-        [{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }, { kind: "NC", address: "I0.2" }],
-        [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }, { kind: "NC", address: "I0.2" }],
-      ], { kind: "COIL", address: "M0" }, "Marche (I0.0) / Arret (I0.1) / Arret urgence (I0.2)"),
+        [grp([[{ kind: "NO", address: "I0.0" }], [{ kind: "NO", address: "M0" }]]), { kind: "NC", address: "I0.1" }, { kind: "NC", address: "I0.2" }],
+      ], { kind: "COIL", address: "M0" }, "Marche (I0.0) OU auto-maintien (M0), en serie avec Arret (I0.1) / Arret urgence (I0.2)"),
       net(2, [[{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.3" }]], { kind: "COIL", address: "Q0.0" }, "Moteur convoyeur, pause si capteur produit I0.3 actif"),
     ],
   },
@@ -485,8 +491,7 @@ const EXAMPLES = [
     ],
     networks: [
       net(2, [
-        [{ kind: "NO", address: "I0.0" }, { kind: "NC", address: "I0.1" }],
-        [{ kind: "NO", address: "M0" }, { kind: "NC", address: "I0.1" }],
+        [grp([[{ kind: "NO", address: "I0.0" }], [{ kind: "NO", address: "M0" }]]), { kind: "NC", address: "I0.1" }],
       ], { kind: "COIL", address: "M0" }, "Flotteur bas I0.0 declenche, flotteur haut I0.1 arrete"),
       net(1, [[{ kind: "NO", address: "M0" }]], { kind: "COIL", address: "Q0.0" }, "Commande pompe"),
     ],
