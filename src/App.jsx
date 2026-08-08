@@ -4,11 +4,12 @@ import {
   LayoutGrid, Gauge as GaugeIcon, ToggleLeft, FolderOpen, Code2,
   MonitorSmartphone, X, Zap, RotateCcw, Eraser, Save, ChevronDown,
   Lightbulb, LineChart as LineChartIcon, SlidersHorizontal, Info,
-  Undo2, Redo2, AlertTriangle,
+  Undo2, Redo2, AlertTriangle, FilePlus, Copy, Pencil, Check,
 } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from "recharts";
+import * as storage from "./storage.js";
 
 /* ============================================================
    IoT PLC Studio
@@ -55,6 +56,7 @@ const DEFAULT_IO_MAP = [
 ];
 function createBlankProject() {
   return {
+    id: uid(),
     name: "Nouveau projet",
     board: "uno",
     networks: [makeNetwork(3, 1, "Reseau 1")],
@@ -251,6 +253,36 @@ function collectTimersCounters(project) {
     }
   });
   return { timers: [...timers.values()].sort((a, b) => a.addr.localeCompare(b.addr)), counters: [...counters.values()].sort((a, b) => a.addr.localeCompare(b.addr)) };
+}
+
+/* ---------- References croisees : ou une adresse est-elle utilisee ? ---------- */
+function scanCellRefs(c, netIndex, netId, add) {
+  if (c.kind === "GROUP") {
+    (c.branches || []).forEach((b) => b.forEach((sc) => scanCellRefs(sc, netIndex, netId, add)));
+    return;
+  }
+  if (["NO", "NC", "P", "N"].includes(c.kind) && c.address) add(c.address, netIndex, netId, "lecture");
+  if (c.kind === "CMP" && c.address) add(c.address, netIndex, netId, "lecture");
+  if (c.kind === "XOR") {
+    if (c.address) add(c.address, netIndex, netId, "lecture");
+    if (c.address2) add(c.address2, netIndex, netId, "lecture");
+  }
+}
+function collectCrossReferences(project) {
+  const map = {};
+  const add = (addr, netIndex, netId, role) => {
+    if (!addr) return;
+    if (!map[addr]) map[addr] = [];
+    if (!map[addr].some((r) => r.netId === netId && r.role === role)) map[addr].push({ netIndex, netId, role });
+  };
+  project.networks.forEach((net, netIndex) => {
+    net.rows.forEach((row) => row.cells.forEach((c) => scanCellRefs(c, netIndex, net.id, add)));
+    const o = net.output;
+    if (o && o.kind !== "NONE" && o.address) add(o.address, netIndex, net.id, "ecriture");
+    if (o && o.resetAddress) add(o.resetAddress, netIndex, net.id, "lecture");
+  });
+  Object.values(map).forEach((refs) => refs.sort((a, b) => a.netIndex - b.netIndex));
+  return map;
 }
 
 /* ---------- Arduino code generator ---------- */
@@ -574,6 +606,7 @@ const EXAMPLES = [
 ];
 function buildExampleProject(ex) {
   return {
+    id: uid(),
     name: ex.title,
     board: "uno",
     networks: clone(ex.networks),
@@ -1146,7 +1179,43 @@ function Palette({ tool, setTool, ioMap, setIoMap }) {
 function LED({ on, color = "var(--bp-energized)" }) {
   return <span style={{ width: 10, height: 10, borderRadius: "50%", display: "inline-block", background: on ? color : "var(--bp-line)", boxShadow: on ? `0 0 6px ${color}` : "none", flexShrink: 0 }} />;
 }
-function WatchPanel({ project, sim, writeBool, writeNum, onRun, onStop, onReset }) {
+// Panneau de references croisees : ou une adresse est-elle lue / ecrite dans le programme,
+// avec un clic pour sauter directement au reseau concerne et le faire clignoter brievement.
+function CrossRefPanel({ project, onJump }) {
+  const [filter, setFilter] = useState("");
+  const map = useMemo(() => collectCrossReferences(project), [project]);
+  const addrs = useMemo(() => Object.keys(map).sort(), [map]);
+  const filtered = filter ? addrs.filter((a) => a.toLowerCase().includes(filter.toLowerCase())) : addrs;
+  return (
+    <div>
+      <div className="plcs-panel-title">References croisees</div>
+      <input className="plcs-input" style={{ width: "100%", marginBottom: 8 }} placeholder="Filtrer par adresse (I0.0, Q0.0, M0...)"
+        value={filter} onChange={(e) => setFilter(e.target.value)} />
+      <div className="plcs-scroll" style={{ maxHeight: 230, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, paddingRight: 2 }}>
+        {filtered.length === 0 && <div style={{ fontSize: 11.5, color: "var(--bp-text-dim)" }}>Aucune adresse utilisee.</div>}
+        {filtered.map((addr) => (
+          <div key={addr}>
+            <div className="plcs-mono" style={{ fontSize: 12, color: "var(--bp-amber)" }}>{addr}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 3 }}>
+              {map[addr].map((ref, i) => (
+                <button key={i} onClick={() => onJump(ref.netId)} className="plcs-mono" title={ref.role === "ecriture" ? "Ecrite dans ce reseau" : "Lue dans ce reseau"}
+                  style={{
+                    fontSize: 10.5, padding: "2px 7px", borderRadius: 3, cursor: "pointer",
+                    border: "1px solid var(--bp-line)",
+                    background: ref.role === "ecriture" ? "rgba(61,220,132,0.14)" : "var(--bp-panel-raised)",
+                    color: ref.role === "ecriture" ? "var(--bp-energized)" : "var(--bp-text)",
+                  }}>
+                  R{ref.netIndex + 1} {ref.role === "ecriture" ? "✎" : "○"}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function WatchPanel({ project, sim, writeBool, writeNum, onRun, onStop, onReset, onJump }) {
   const diIo = project.ioMap.filter((i) => i.kind === "DI");
   const aiIo = project.ioMap.filter((i) => i.kind === "AI");
   const boolAddrs = collectUsedBoolAddresses(project);
@@ -1168,6 +1237,8 @@ function WatchPanel({ project, sim, writeBool, writeNum, onRun, onStop, onReset 
       <div style={{ fontSize: 11, color: "var(--bp-text-dim)" }}>
         Cycle de scan : <span className="plcs-mono" style={{ color: "var(--bp-blue)" }}>{SCAN_MS} ms</span> · {sim.running ? <span style={{ color: "var(--bp-energized)" }}>en cours</span> : "arretee"}
       </div>
+
+      <CrossRefPanel project={project} onJump={onJump} />
 
       <div>
         <div className="plcs-panel-title">Entrees virtuelles (TOR)</div>
@@ -1375,9 +1446,9 @@ function useResizeHeight(min, max) {
 // Un "rung" (reseau) au sein d'une feuille de schema continue : pas de boite ni de
 // defilement propre, juste un numero de reseau en marge et un separateur fin entre reseaux,
 // pour retrouver la continuite visuelle d'un vrai logiciel Ladder (rails alignes verticalement).
-function NetworkCard({ index, net, sim, onCellClick, onOutputClick, onAddRow, onRemoveRow, onAddCol, onRemoveCol, onDelete, onComment }) {
+function NetworkCard({ index, net, sim, onCellClick, onOutputClick, onAddRow, onRemoveRow, onAddCol, onRemoveCol, onDelete, onComment, highlighted }) {
   return (
-    <div style={{ display: "flex", borderTop: index === 0 ? "none" : "1px solid var(--bp-line)", paddingTop: index === 0 ? 4 : 14, marginTop: index === 0 ? 0 : 14 }}>
+    <div id={`net-${net.id}`} style={{ display: "flex", borderTop: index === 0 ? "none" : "1px solid var(--bp-line)", paddingTop: index === 0 ? 4 : 14, marginTop: index === 0 ? 0 : 14, background: highlighted ? "rgba(240,168,60,0.14)" : "transparent", borderRadius: 4, transition: "background 0.5s ease" }}>
       <div style={{ width: 40, flexShrink: 0, display: "flex", justifyContent: "center", paddingTop: 6 }}>
         <span className="plcs-mono" style={{ fontSize: 11, fontWeight: 700, color: "var(--bp-text-dim)" }}>R{index + 1}</span>
       </div>
@@ -1393,6 +1464,15 @@ function NetworkCard({ index, net, sim, onCellClick, onOutputClick, onAddRow, on
 function LadderTab({ project, setProject, tool, setTool, sim, selection, setSelection, writeBool, writeNum, onRun, onStop, onReset }) {
   const [leftW, leftDrag, resetLeft] = useResizeWidth(240, 170, 440, false);
   const [rightW, rightDrag, resetRight] = useResizeWidth(260, 210, 480, true);
+  const [highlightedNetId, setHighlightedNetId] = useState(null);
+  const jumpTimeoutRef = useRef(null);
+  const jumpToNetwork = useCallback((netId) => {
+    setHighlightedNetId(netId);
+    const el = document.getElementById(`net-${netId}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.clearTimeout(jumpTimeoutRef.current);
+    jumpTimeoutRef.current = window.setTimeout(() => setHighlightedNetId(null), 1800);
+  }, []);
   const updateNetworks = (fn) => setProject((p) => ({ ...p, networks: fn(clone(p.networks)) }));
 
   const placeOrSelectCell = (networkId, rowId, colIndex) => {
@@ -1484,7 +1564,7 @@ function LadderTab({ project, setProject, tool, setTool, sim, selection, setSele
         <div className="plcs-scroll plcs-blueprint-grid" style={{ flex: 1, minWidth: 0, overflow: "auto", padding: "20px 20px 24px" }}>
           <div style={{ background: "rgba(14,32,54,0.55)", border: "1px solid var(--bp-line)", borderRadius: 6, padding: "10px 14px 16px" }}>
             {project.networks.map((net, i) => (
-              <NetworkCard key={net.id} index={i} net={net} sim={sim}
+              <NetworkCard key={net.id} index={i} net={net} sim={sim} highlighted={highlightedNetId === net.id}
                 onCellClick={placeOrSelectCell} onOutputClick={placeOrSelectOutput}
                 onAddRow={() => addRow(net.id)} onRemoveRow={() => removeRow(net.id)}
                 onAddCol={() => addCol(net.id)} onRemoveCol={() => removeCol(net.id)}
@@ -1501,7 +1581,7 @@ function LadderTab({ project, setProject, tool, setTool, sim, selection, setSele
           <Inspector selection={selection} project={project} updateCell={updateCell} updateOutput={updateOutput} />
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
-          <WatchPanel project={project} sim={sim} writeBool={writeBool} writeNum={writeNum} onRun={onRun} onStop={onStop} onReset={onReset} />
+          <WatchPanel project={project} sim={sim} writeBool={writeBool} writeNum={writeNum} onRun={onRun} onStop={onStop} onReset={onReset} onJump={jumpToNetwork} />
         </div>
       </div>
     </div>
@@ -1676,8 +1756,72 @@ const TABS = [
 ];
 const HISTORY_LEN = 40;
 
+// Menu deroulant "Mes projets" : liste les projets sauvegardes localement dans ce navigateur,
+// avec creation, ouverture, renommage, duplication et suppression.
+function ProjectSwitcher({ currentId, projectList, onOpen, onNew, onDuplicate, onDelete, onRename }) {
+  const [open, setOpen] = useState(false);
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
+  const ref = useRef(null);
+  useEffect(() => {
+    const onDocClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+  const sorted = [...projectList].sort((a, b) => b.updatedAt - a.updatedAt);
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <Btn onClick={() => setOpen((o) => !o)} title="Mes projets sauvegardes dans ce navigateur">
+        <FolderOpen size={14} /> Mes projets <ChevronDown size={12} />
+      </Btn>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, width: 290, background: "var(--bp-panel-raised)", border: "1px solid var(--bp-line)", borderRadius: 6, boxShadow: "0 10px 28px rgba(0,0,0,0.45)", zIndex: 50, padding: 8 }}>
+          <Btn onClick={() => { onNew(); setOpen(false); }} style={{ width: "100%", justifyContent: "center", marginBottom: 6 }}>
+            <FilePlus size={14} /> Nouveau projet
+          </Btn>
+          <div className="plcs-scroll" style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
+            {sorted.length === 0 && <div style={{ fontSize: 11.5, color: "var(--bp-text-dim)", padding: "4px 2px" }}>Aucun projet sauvegarde pour l'instant.</div>}
+            {sorted.map((p) => (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 6px", borderRadius: 4, background: p.id === currentId ? "rgba(240,168,60,0.14)" : "transparent" }}>
+                {renamingId === p.id ? (
+                  <>
+                    <input className="plcs-input" style={{ flex: 1, fontSize: 12 }} autoFocus value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { onRename(p.id, renameValue); setRenamingId(null); } }} />
+                    <button onClick={() => { onRename(p.id, renameValue); setRenamingId(null); }} title="Valider" style={{ background: "none", border: "none", color: "var(--bp-energized)", cursor: "pointer" }}><Check size={13} /></button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => { onOpen(p.id); setOpen(false); }} style={{ flex: 1, textAlign: "left", background: "none", border: "none", color: "var(--bp-text)", cursor: "pointer", fontSize: 12.5, padding: 0 }}>
+                      {p.name} {p.id === currentId && <span style={{ color: "var(--bp-amber)", fontSize: 10 }}>(ouvert)</span>}
+                    </button>
+                    <button onClick={() => { setRenamingId(p.id); setRenameValue(p.name); }} title="Renommer" style={{ background: "none", border: "none", color: "var(--bp-text-dim)", cursor: "pointer" }}><Pencil size={12} /></button>
+                    <button onClick={() => onDelete(p.id)} title="Supprimer" style={{ background: "none", border: "none", color: "var(--bp-alarm)", cursor: "pointer" }}><Trash2 size={12} /></button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ borderTop: "1px solid var(--bp-line)", marginTop: 6, paddingTop: 6 }}>
+            <Btn onClick={() => { onDuplicate(); setOpen(false); }} style={{ width: "100%", justifyContent: "center" }}>
+              <Copy size={14} /> Dupliquer le projet actuel
+            </Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
-  const [project, setProjectRaw] = useState(createBlankProject);
+  const [project, setProjectRaw] = useState(() => {
+    const lastId = storage.getLastOpenedId();
+    if (lastId) {
+      const loaded = storage.loadProject(lastId);
+      if (loaded && loaded.networks && loaded.ioMap) return loaded;
+    }
+    return createBlankProject();
+  });
   const undoStack = useRef([]);
   const redoStack = useRef([]);
   const skipHistory = useRef(false);
@@ -1788,6 +1932,18 @@ export default function App() {
   };
   useEffect(() => () => { if (intervalRef.current) clearInterval(intervalRef.current); }, []);
 
+  // Sauvegarde automatique (debounce 600ms) a chaque modification du projet.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      storage.saveProject(project);
+      setProjectList(storage.listProjects());
+    }, 600);
+    return () => clearTimeout(t);
+  }, [project]);
+  const [projectList, setProjectList] = useState(() => storage.listProjects());
+  const storageAvailable = useMemo(() => storage.isStorageAvailable(), []);
+  const refreshProjectList = () => setProjectList(storage.listProjects());
+
   const loadProject = (p) => {
     onReset();
     undoStack.current = [];
@@ -1796,6 +1952,35 @@ export default function App() {
     setProjectRaw(p);
     setSelection(null);
     setTool(null);
+  };
+  const openProjectById = (id) => {
+    const p = storage.loadProject(id);
+    if (p) { loadProject(p); storage.setLastOpenedId(id); }
+  };
+  const newProject = () => {
+    const p = createBlankProject();
+    storage.saveProject(p);
+    refreshProjectList();
+    loadProject(p);
+  };
+  const duplicateCurrentProject = () => {
+    const copy = clone(project);
+    copy.id = uid();
+    copy.name = project.name + " (copie)";
+    storage.saveProject(copy);
+    refreshProjectList();
+    loadProject(copy);
+  };
+  const deleteProjectById = (id) => {
+    if (!window.confirm("Supprimer ce projet sauvegarde ? Cette action est irreversible.")) return;
+    storage.deleteProject(id);
+    refreshProjectList();
+    if (id === project.id) newProject();
+  };
+  const renameProjectById = (id, name) => {
+    storage.renameProject(id, name);
+    refreshProjectList();
+    if (id === project.id) setProjectRaw((p) => ({ ...p, name }));
   };
   const loadExample = (ex) => { loadProject(buildExampleProject(ex)); setTab("ladder"); };
 
@@ -1838,6 +2023,9 @@ export default function App() {
         </div>
         <input className="plcs-input" style={{ background: "transparent", border: "1px solid transparent", fontFamily: "IBM Plex Sans", minWidth: 140 }}
           value={project.name} onChange={(e) => setProject((p) => ({ ...p, name: e.target.value }))} />
+        <ProjectSwitcher currentId={project.id} projectList={projectList}
+          onOpen={openProjectById} onNew={newProject} onDuplicate={duplicateCurrentProject}
+          onDelete={deleteProjectById} onRename={renameProjectById} />
         <select className="plcs-select" value={project.board} onChange={(e) => setProject((p) => ({ ...p, board: e.target.value }))}>
           {BOARDS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
         </select>
@@ -1876,7 +2064,7 @@ export default function App() {
 
       {/* Status bar */}
       <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 16px", background: "linear-gradient(180deg,#232830,#181c21)", borderTop: "2px solid #111417", boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)", fontSize: 11, color: "var(--bp-text-dim)" }} className="plcs-mono">
-        <span>{project.networks.length} reseau(x) · {project.ioMap.length} adresse(s) E/S</span>
+        <span>{project.networks.length} reseau(x) · {project.ioMap.length} adresse(s) E/S · {storageAvailable ? "sauvegarde locale active" : "sauvegarde locale indisponible"}</span>
         <span style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 600, letterSpacing: ".04em", color: sim.running ? "var(--bp-energized)" : "var(--bp-text-dim)" }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: sim.running ? "var(--bp-energized)" : "var(--bp-line-strong)", boxShadow: sim.running ? "0 0 6px var(--bp-energized)" : "inset 0 1px 2px rgba(0,0,0,.6)", animation: sim.running ? "plcs-blink 1.4s infinite" : "none" }} />
           {sim.running ? "AUTOMATE EN MARCHE (simulation)" : "ARRETE"}
